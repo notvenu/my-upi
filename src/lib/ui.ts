@@ -95,7 +95,7 @@ async function billStore<T>(mode: IDBTransactionMode, fn: (s: IDBObjectStore) =>
   const s = (await idb()).transaction('bills', mode).objectStore('bills');
   return new Promise<T>((res, rej) => { const r = fn(s); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
 }
-export async function saveBill(file: File): Promise<string> {
+export async function saveBill(file: Blob): Promise<string> {
   const img = await createImageBitmap(file);
   const k = Math.min(1, 1400 / Math.max(img.width, img.height));
   const c = new OffscreenCanvas(Math.round(img.width * k), Math.round(img.height * k));

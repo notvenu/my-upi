@@ -81,7 +81,7 @@ export default function EditTxn({ t: initial, onClose }: { t: Txn; onClose: () =
 
       {t.direction === 'debit' && (
         <>
-          <h3 className="eyebrow">Split</h3>
+          <h3 className="eyebrow">Who pays</h3>
           {existing.length ? (
             <>
               {t.items?.length ? (

@@ -113,7 +113,7 @@ export default function App() {
       {!sync.checked ? null /* checking the saved session: blank for a moment, not a flash of the login form */ : signedOut ? <Login /> : (
         <>
           <div className={`app${chrome.sheets > 0 ? ' receded' : ''}`}>
-            <main ref={main} className={nav.tab === 'scan' ? 'dark-bg' : ''} onScroll={(e) => setScrollY(e.currentTarget.scrollTop)}>
+            <main ref={main} onScroll={(e) => setScrollY(e.currentTarget.scrollTop)}>
               <div key={nav.tab} className="tab-view">
                 {nav.tab === 'home' ? <Home goTab={goTab} />
                   : nav.tab === 'insights' ? <Insights />
@@ -145,7 +145,7 @@ export default function App() {
             </nav>
           </div>
 
-          {nav.pay && <PayForm qr={nav.pay.qr} record={nav.pay.record} onClose={(saved) => { setNav({ pay: null }); if (saved) goTab('home'); }} />}
+          {nav.pay && <PayForm qr={nav.pay.qr} record={nav.pay.record} draft={nav.pay.draft} onClose={(saved) => { setNav({ pay: null }); if (saved) goTab('home'); }} />}
           {nav.history && <History onClose={() => setNav({ history: false })} />}
           {nav.subs && <Subs onClose={() => setNav({ subs: false })} />}
           {nav.confirming && <ConfirmSheet focus={nav.confirmId} onClose={() => setNav({ confirming: false, confirmId: null })} />}
@@ -177,7 +177,6 @@ export default function App() {
         /* the presenting screen recedes behind a sheet, like an iOS card stack */
         .app.receded { transform: translateY(calc(env(safe-area-inset-top) + 12px)) scale(.92); border-radius: 18px; }
         main { position: absolute; inset: 0; overflow-y: auto; overscroll-behavior-y: contain; -webkit-overflow-scrolling: touch; scrollbar-width: none; }
-        main.dark-bg { background: #000; }
         .tab-view { animation: tab-in .28s var(--ease); min-height: 100%; }
         @keyframes tab-in { from { opacity: 0; } }
 

@@ -3,7 +3,7 @@ import { Check, X } from 'lucide-react';
 import { useState } from 'react';
 import Avatar from '@/components/Avatar';
 import Sheet from '@/components/Sheet';
-import { confirmPaid, db, deleteTxn, toConfirm, type Txn } from '@/lib/db';
+import { confirmPaid, db, deleteTxn, toConfirm, txnSplits, type Txn } from '@/lib/db';
 import { setNav } from '@/lib/nav';
 import { openUpiApp, preferredApp, removeBill, shortDate, time12, toast, toPaise, UPI_APPS } from '@/lib/ui';
 import { cleanAmount, rupees } from '@/lib/upi';
@@ -21,7 +21,9 @@ export default function ConfirmSheet({ focus = null, onClose }: { focus?: number
     confirmPaid(t.id, amount);
     toast(`Paid ${rupees(amount)}${t.payee_name ? ` to ${t.payee_name}` : ''}`);
     if (!toConfirm().length) onClose();
-    setNav({ editing: db.txns.find((x) => x.id === t.id) ?? null }); // now the details
+    const filled = t.category !== 'Other' || t.note || txnSplits(t.id).length;
+    if (!filled) setNav({ editing: db.txns.find((x) => x.id === t.id) ?? null }); // now the details
+    else if (txnSplits(t.id).some((s) => s.person_id && !s.requested_at)) setNav({ requestFor: t.id }); // details came first: ask for the shares
   }
   function notPaid(t: Txn) {
     removeBill(t.bill_uri);

@@ -67,7 +67,7 @@ input:focus-visible { outline: none; } /* the caret shows focus; fields sit insi
 .page { width: 100%; max-width: 600px; margin: 0 auto; padding: 0 16px 130px; }
 @media (min-width: 900px) { .page { max-width: 720px; padding: 0 32px 60px; } }
 /* wide laptop screens: pages use two columns (.split: a sticky .side and the main list) */
-.split { display: grid; gap: 0 32px; }
+.split { display: grid; grid-template-columns: minmax(0, 1fr); gap: 0 32px; } /* minmax: wide inputs can't stretch the page past the screen */
 .wide-only { display: none; }
 @media (min-width: 1100px) {
   .page { max-width: 1160px; }

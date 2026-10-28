@@ -165,3 +165,34 @@ assert.deepEqual(settleFromCredits([{ amount: 2000, desc: 'IMPS PRIYA NAIR' }], 
 assert.deepEqual(settleFromCredits([{ amount: 999, desc: 'IMPS PRIYA NAIR' }], owing), []); // part payment: stays unpaid
 assert.deepEqual(settleFromCredits([{ amount: 6000, desc: 'NEFT PRIYANKA' }], owing), []); // not Priya
 console.log('share and settle checks passed');
+
+// ── reading a bill photo's OCR text ──
+import { parseReceipt } from './receipt.ts';
+const grocery = parseReceipt(`
+SRI BALAJI SUPERMARKET
+#12, 5th Cross, Koramangala
+GSTIN 29ABCDE1234F1Z5
+Tax Invoice   Bill No: 4471
+Date: 26/10/2026  19:42
+Item            Qty  Rate   Amount
+Tomato 1kg       1   45.00   45.00
+Paneer 200g      2   90.00  180.00
+Amul Milk 1L     2   34.00   68.00
+Onion            1   38.00   38.00
+Sub Total                   331.00
+CGST 2.5%                     4.14
+SGST 2.5%                     4.14
+Round Off                     0.72
+Grand Total               ₹ 340.00
+UPI                         340.00
+Thank you, visit again`);
+assert.equal(grocery.shop, 'Sri Balaji Supermarket');
+assert.equal(grocery.date, '2026-10-26');
+assert.equal(grocery.total, 34000);
+assert.deepEqual(grocery.items, [
+  { name: 'Tomato 1kg', amount: 4500 }, { name: 'Paneer 200g', amount: 18000 }, { name: 'Amul Milk 1l', amount: 6800 }, { name: 'Onion', amount: 3800 },
+]);
+const cafe = parseReceipt('Third Wave Coffee\nCappuccino 220\nCroissant 180\nTOTAL 400');
+assert.deepEqual([cafe.shop, cafe.total, cafe.items.length], ['Third Wave Coffee', 40000, 2]);
+assert.equal(parseReceipt('blurry\n\n12.50\n99.00').total, 9900); // no total line: the largest amount
+console.log('bill checks passed');
