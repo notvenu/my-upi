@@ -1,6 +1,6 @@
 import { findRecurring, nextDue, settleFromCredits, type Every } from './calc';
 import { emit } from './store';
-import { matchRows, methodFromDesc, type StmtRow } from './statement';
+import { matchRows, methodFromDesc, payeeFromDesc, type StmtRow } from './statement';
 import { SUBCATEGORIES } from './upi';
 
 // The whole store, kept as one JSON document in localStorage and synced row by row
@@ -15,6 +15,7 @@ export type Txn = {
   method?: Method | null; app?: string | null; // how it was paid; app = the UPI app's name
   sub_id?: number | null; // logged by an autopay
   items?: Item[] | null; // a bill split item by item
+  desc?: string | null; // the bank / UPI app's own text for a statement row
 };
 export type Method = 'upi' | 'cash' | 'card' | 'bank';
 export type Item = { name: string; amount: number; who: number[] }; // who: person ids, 0 = you
@@ -25,7 +26,7 @@ export type Split = {
   requested_at: string | null; paid_at: string | null;
 };
 type PersonRow = { id: number; name: string; phone: string | null; vpa: string | null };
-type GroupRow = { id: number; name: string; memberIds: number[] };
+type GroupRow = { id: number; name: string; memberIds: number[]; trip?: boolean }; // trip: a trip or event, its name is the tag on its payments
 export type Person = PersonRow & { owed: number; groupIds: number[] };
 export type Group = GroupRow;
 export type Owed = Split & { note: string | null; payee_name: string | null; created_at: string; txn_amount: number; trip: string | null };
@@ -77,16 +78,20 @@ function insertSplits(txnId: number, splits: { personId: number; amount: number 
 }
 
 export function addTxn(t: Partial<Txn> & { amount: number }, splits: { personId: number; amount: number }[] = []): number {
+  const id = pushTxn(t, splits);
+  save();
+  return id;
+}
+function pushTxn(t: Partial<Txn> & { amount: number }, splits: { personId: number; amount: number }[] = []): number {
   const id = nextId();
   db.txns.push({
     id, amount: t.amount, direction: t.direction ?? 'debit', payee_vpa: t.payee_vpa ?? null, payee_name: t.payee_name ?? null, note: t.note || null,
     category: t.category ?? 'Other', subcategory: t.subcategory ?? null, place: t.place || null, lat: t.lat ?? null, lng: t.lng ?? null,
     created_at: t.created_at ?? localIso(), status: t.status ?? 'SUCCESS', txn_ref: t.txn_ref ?? null, upi_txn_id: null, bank_ref: t.bank_ref ?? null,
     source: t.source ?? 'manual', stmt_key: t.stmt_key ?? null, bill_uri: t.bill_uri ?? null, trip: t.trip?.trim() || null,
-    method: t.method ?? null, app: t.app ?? null, sub_id: t.sub_id ?? null, items: t.items?.length ? t.items : null,
+    method: t.method ?? null, app: t.app ?? null, sub_id: t.sub_id ?? null, items: t.items?.length ? t.items : null, desc: t.desc ?? null,
   });
   insertSplits(id, splits);
-  save();
   return id;
 }
 
@@ -182,6 +187,30 @@ export function addGroup(name: string) {
   save();
 }
 export function deleteGroup(id: number) { db.groups = db.groups.filter((g) => g.id !== id); save(); }
+// A group or a trip with its people. Renaming a trip renames the tag on its payments and its split link too.
+export function saveGroup(g: { id?: number; name: string; memberIds: number[]; trip?: boolean }): number {
+  const name = g.name.trim().slice(0, 40);
+  const existing = g.id ? db.groups.find((x) => x.id === g.id) : undefined;
+  if (existing?.trip && existing.name !== name) {
+    for (const t of db.txns) if (t.trip === existing.name) t.trip = name;
+    for (const s of db.shares) if (s.trip === existing.name) s.trip = name;
+  }
+  const row = { name, memberIds: [...new Set(g.memberIds)], ...(g.trip ? { trip: true } : {}) };
+  const id = existing ? existing.id : nextId();
+  if (existing) Object.assign(existing, row); else db.groups.push({ id, ...row });
+  save();
+  return id;
+}
+export const tripGroup = (name: string) => db.groups.find((g) => g.trip && g.name === name);
+// A trip's payments, people (made on People, else whoever its splits went to), total spent and what's still owed on it.
+export function tripInfo(name: string) {
+  const txns = db.txns.filter((t) => t.trip === name && counted(t)).sort(newestFirst);
+  const ids = new Set(txns.map((t) => t.id));
+  const group = tripGroup(name);
+  const people = group ? group.memberIds : [...new Set(db.splits.filter((s) => ids.has(s.txn_id) && s.person_id).map((s) => s.person_id!))];
+  const spent = txns.filter((t) => t.direction === 'debit').reduce((a, t) => a + t.amount, 0);
+  return { group, txns, people, spent, owed: unpaidSplits().filter((x) => x.trip === name) };
+}
 
 export function unpaidSplits(personId?: number): Owed[] {
   return db.splits
@@ -192,9 +221,10 @@ export function unpaidSplits(personId?: number): Owed[] {
     .map(({ s, t }) => ({ ...s, note: t.note, payee_name: t.payee_name, created_at: t.created_at, txn_amount: t.amount, trip: t.trip ?? null }));
 }
 
-// Trip tags used so far, most recent first, for suggestions.
+// Trips and events: ones made on the People tab, then tags used on payments, most recent first.
 export function listTrips(): string[] {
-  return [...new Set([...db.txns].sort(newestFirst).map((t) => t.trip).filter(Boolean) as string[])];
+  const made = db.groups.filter((g) => g.trip).sort((a, b) => b.id - a.id).map((g) => g.name);
+  return [...new Set([...made, ...([...db.txns].sort(newestFirst).map((t) => t.trip).filter(Boolean) as string[])])];
 }
 
 export function markSplits(ids: number[], field: 'requested_at' | 'paid_at') {
@@ -206,44 +236,61 @@ export function markSplits(ids: number[], field: 'requested_at' | 'paid_at') {
 export const getSetting = (k: string) => db.settings[k] ?? '';
 export function setSetting(k: string, v: string) { db.settings[k] = v; save(); }
 
-// Skip rows already imported (same row or same UPI ref), confirm payments MyUPI recorded, add the rest.
-export function importStatement(rows: StmtRow[]) {
-  let matched = 0, added = 0, skipped = 0;
-  const fresh = rows.filter((r) => {
-    const dup = db.txns.some((t) => t.stmt_key === r.key || (r.ref && t.bank_ref === r.ref));
-    if (dup) skipped++;
-    return !dup;
+// ── statement import: plan first (shown for review), then apply ──
+// dup: this row (or its UPI ref) was imported before · match: confirms a payment recorded here (same ref, or amount ±1 day)
+// maybe: same amount ±1 day as one imported from another statement (a PhonePe PDF and the bank's, say), left out unless ticked
+// new: added. The reason and category typed in review are saved with it.
+export type ImportRow = StmtRow & {
+  status: 'dup' | 'match' | 'maybe' | 'new'; txnId: number | null; name: string; note: string; category: string; subcategory: string | null;
+  trip: string; include: boolean;
+};
+const matchable = (t: Txn) => ({ id: t.id, amount: t.amount, direction: t.direction, date: t.created_at.slice(0, 10), refs: [t.upi_txn_id, t.bank_ref].filter(Boolean) as string[] });
+
+export function planImport(rows: StmtRow[]): ImportRow[] {
+  const isDup = (r: StmtRow) => db.txns.some((t) => t.stmt_key === r.key || (r.ref && t.bank_ref === r.ref));
+  const fresh = rows.filter((r) => !isDup(r));
+  const recorded = matchRows(fresh, db.txns.filter((t) => !t.stmt_key && t.source !== 'statement').map(matchable));
+  const left = fresh.filter((_, i) => recorded[i] === null);
+  const imported = matchRows(left, db.txns.filter((t) => t.stmt_key).map(matchable));
+  return rows.map((r) => {
+    const name = payeeFromDesc(r.desc, r.vpa);
+    const last = lastPick(r.vpa, name);
+    const base = { ...r, name, note: '', category: last?.category || (r.direction === 'credit' ? 'Transfer' : 'Other'), subcategory: last?.subcategory || null, trip: '' };
+    if (isDup(r)) return { ...base, status: 'dup', txnId: null, include: false };
+    const fi = fresh.indexOf(r);
+    const t = recorded[fi] !== null ? txnById(recorded[fi]!) : undefined;
+    if (t) return { ...base, status: 'match', txnId: t.id, name: t.payee_name || name, note: t.note ?? '', category: t.category, subcategory: t.subcategory, trip: t.trip ?? '', include: true };
+    const twin = imported[left.indexOf(r)];
+    return twin !== null ? { ...base, status: 'maybe', txnId: twin, include: false } : { ...base, status: 'new', txnId: null, include: true };
   });
-  const candidates = db.txns.filter((t) => !t.stmt_key && t.source !== 'statement').map((t) => ({
-    id: t.id, amount: t.amount, direction: t.direction, date: t.created_at.slice(0, 10),
-    refs: [t.upi_txn_id, t.bank_ref].filter(Boolean) as string[],
-  }));
-  matchRows(fresh, candidates).forEach((id, i) => {
-    const r = fresh[i];
-    const t = id !== null ? txnById(id) : undefined;
+}
+
+export function applyImport(plan: ImportRow[]) {
+  let matched = 0, added = 0;
+  const used = plan.filter((r) => r.status !== 'dup' && r.include);
+  for (const r of used) {
+    const t = r.status === 'match' ? txnById(r.txnId!) : undefined;
     if (t) {
-      Object.assign(t, { status: 'SUCCESS', stmt_key: r.key, bank_ref: t.bank_ref ?? r.ref ?? null });
+      Object.assign(t, { status: 'SUCCESS', stmt_key: r.key, bank_ref: t.bank_ref ?? r.ref ?? null, desc: t.desc ?? r.desc, note: r.note.trim() || null,
+        category: r.category, subcategory: r.subcategory, trip: r.trip.trim() || null });
       matched++;
     } else {
-      const name = r.vpa ? r.vpa.split('@')[0] : r.desc.slice(0, 40);
-      const last = lastPick(r.vpa, name);
-      addTxn({
-        amount: r.amount, direction: r.direction, payee_vpa: r.vpa ?? null, payee_name: name, note: r.desc,
-        category: last?.category || (r.direction === 'credit' ? 'Transfer' : 'Other'), subcategory: last?.subcategory || null,
-        created_at: `${r.date}T12:00:00`, status: 'SUCCESS', source: 'statement', stmt_key: r.key, bank_ref: r.ref ?? null,
-        method: methodFromDesc(r.desc, r.vpa),
+      pushTxn({
+        amount: r.amount, direction: r.direction, payee_vpa: r.vpa ?? null, payee_name: r.name || null, note: r.note.trim() || null, desc: r.desc,
+        category: r.category, subcategory: r.subcategory, trip: r.trip, created_at: `${r.date}T12:00:00`, status: 'SUCCESS', source: 'statement',
+        stmt_key: r.key, bank_ref: r.ref ?? null, method: methodFromDesc(r.desc, r.vpa),
       });
       added++;
     }
-  });
+  }
   // friends paying back: credits that match what someone owes mark those splits paid
   const owing = db.people.map((p) => ({
     id: p.id, name: p.name, vpa: p.vpa,
     unpaid: unpaidSplits(p.id).map((s) => ({ id: s.id, amount: s.amount, month: s.created_at.slice(0, 7) })),
   }));
-  const paidIds = settleFromCredits(fresh.filter((r) => r.direction === 'credit'), owing);
-  markSplits(paidIds, 'paid_at');
-  return { matched, added, skipped, settled: paidIds.length };
+  const paidIds = settleFromCredits(used.filter((r) => r.direction === 'credit'), owing);
+  markSplits(paidIds, 'paid_at'); // saves
+  return { matched, added, skipped: plan.length - used.length, settled: paidIds.length };
 }
 
 // Older entries have no method: UPI if it has a UPI ID or was paid through MyUPI.
@@ -282,7 +329,7 @@ export function suggestedSubs(today: string) {
   const seen = db.txns
     .filter((t) => t.direction === 'debit' && counted(t) && !t.sub_id)
     .map((t) => ({ key: (t.payee_vpa || t.payee_name || t.note || '').toLowerCase(), name: t.payee_name || t.note || t.payee_vpa || 'Payment',
-      amount: t.amount, date: t.created_at.slice(0, 10), category: t.category, note: t.note ?? '' }))
+      amount: t.amount, date: t.created_at.slice(0, 10), category: t.category, note: t.note ?? t.desc ?? '' }))
     .filter((x) => x.key);
   return findRecurring(seen, today).filter((r) => !dismissed.includes(r.key) && !have.has(r.name.toLowerCase()));
 }

@@ -17,7 +17,7 @@ export class Split {
   constructor(public changed: () => void) {}
   set = (patch: Partial<Pick<Split, 'on' | 'picked' | 'shares' | 'byItem' | 'items'>>) => { Object.assign(this, patch); this.changed(); };
 
-  // Just me · Equally · By item
+  // Just me · Split equally · Split by item
   get mode(): 'me' | 'equal' | 'items' { return !this.on ? 'me' : this.byItem ? 'items' : 'equal'; }
   setMode = (m: 'me' | 'equal' | 'items') =>
     this.set({ on: m !== 'me', byItem: m === 'items', items: m === 'items' && !this.items.length ? [{ name: '', amount: '', who: [] }] : this.items });
@@ -41,13 +41,14 @@ export class Split {
     this.on && this.byItem ? this.items.filter((it) => paise(it.amount)).map((it) => ({ name: it.name.trim() || 'Item', amount: paise(it.amount), who: it.who })) : null;
 }
 
-// items: a scanned bill's lines, ready for "By item"
-export function useSplit(total: number, items?: { name: string; amount: number }[]): Split {
+// items: a scanned bill's lines, ready for "By item". people: a trip's people, so it starts split equally between them.
+export function useSplit(total: number, items?: { name: string; amount: number }[], people?: number[]): Split {
   const [, rerender] = useReducer((n: number) => n + 1, 0);
   const ref = useRef<Split>(null);
   if (!ref.current) {
     ref.current = new Split(rerender);
     ref.current.items = (items ?? []).map((it) => ({ name: it.name, amount: String(it.amount / 100), who: [] }));
+    if (people?.length) Object.assign(ref.current, { on: true, picked: people });
   }
   ref.current.base = total;
   return ref.current;

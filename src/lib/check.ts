@@ -196,3 +196,39 @@ const cafe = parseReceipt('Third Wave Coffee\nCappuccino 220\nCroissant 180\nTOT
 assert.deepEqual([cafe.shop, cafe.total, cafe.items.length], ['Third Wave Coffee', 40000, 2]);
 assert.equal(parseReceipt('blurry\n\n12.50\n99.00').total, 9900); // no total line: the largest amount
 console.log('bill checks passed');
+
+// ── statement PDFs: UPI app text, bank tables with empty cells, payee names ──
+import { parsePdfStatement, parseTextStatement, payeeFromDesc } from './statement.ts';
+assert.equal(parseDate('Oct 28, 2026'), '2026-10-28');
+const pe = parseTextStatement([
+  'Transaction Statement for 9876543210', 'Date Transaction Details Type Amount',
+  'Oct 28, 2026 Paid to Swiggy DEBIT ₹245', '08:15 pm Transaction ID T2610281234', 'UTR No. 612345678901', 'Paid by XXXXXXXX1234',
+  'Oct 27, 2026 Received from Rahul Sharma CREDIT ₹1,250.50', '09:00 am UTR No. 698765432109',
+  'Page 1 of 1',
+]);
+assert.deepEqual(pe.map((r) => [r.date, r.amount, r.direction, r.ref]), [['2026-10-28', 24500, 'debit', '612345678901'], ['2026-10-27', 125050, 'credit', '698765432109']]);
+assert.equal(payeeFromDesc(pe[0].desc), 'Swiggy');
+assert.equal(payeeFromDesc(pe[1].desc), 'Rahul Sharma');
+assert.equal(payeeFromDesc('UPI-CAFE COFFEE-cafe.coffee@okaxis-UTIB0-612345678901-coffee', 'cafe.coffee@okaxis'), 'Cafe Coffee');
+assert.equal(payeeFromDesc('POS 4321 DMART'), 'Dmart');
+assert.equal(payeeFromDesc('UPI/DR/611111111111/X', 'x1@ybl'), 'x1');
+const C = (x: number, text: string, w = 40) => ({ x, w, text });
+const pdfRows = parsePdfStatement([
+  [C(40, 'STATE BANK OF INDIA', 200)],
+  [C(40, 'Txn Date'), C(110, 'Description', 150), C(300, 'Ref No'), C(380, 'Debit'), C(450, 'Credit'), C(520, 'Balance')],
+  [C(40, '05/10/2026'), C(110, 'UPI/DR/612345678901/CAFE', 150), C(385, '120.00', 35), C(515, '9,880.00', 45)], // no credit cell at all
+  [C(110, 'COFFEE/okaxis', 150)], // narration wraps
+  [C(40, '06/10/2026'), C(110, 'NEFT RAHUL', 150), C(455, '1,250.50', 35), C(515, '11,130.50', 45)],
+]);
+assert.deepEqual(pdfRows.map((r) => [r.amount, r.direction, r.ref]), [[12000, 'debit', '612345678901'], [125050, 'credit', undefined]]);
+assert.equal(pdfRows[0].desc, 'UPI/DR/612345678901/CAFE COFFEE/okaxis');
+// PhonePe's PDF lines up as a table too: time, transaction ID and UTR sit on the lines under each payment
+const pePdf = parsePdfStatement([
+  [C(40, 'Date'), C(150, 'Transaction Details', 120), C(380, 'Type'), C(470, 'Amount')],
+  [C(40, 'Oct 28, 2026', 60), C(150, 'Paid to Swiggy', 120), C(380, 'DEBIT'), C(470, '₹245')],
+  [C(40, '08:15 pm'), C(150, 'Transaction ID T2610281234', 120)],
+  [C(150, 'UTR No. 612345678901', 120)],
+  [C(40, 'Oct 27, 2026', 60), C(150, 'Received from Rahul', 120), C(380, 'CREDIT'), C(470, '₹500')],
+]);
+assert.deepEqual(pePdf.map((r) => [r.amount, r.direction, r.ref, payeeFromDesc(r.desc)]), [[24500, 'debit', '612345678901', 'Swiggy'], [50000, 'credit', undefined, 'Rahul']]);
+console.log('statement pdf checks passed');

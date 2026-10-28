@@ -1,27 +1,22 @@
 'use client';
-import { CircleAlert, CircleCheck, CirclePlus, Cloud, CloudOff, Download, FileUp, SkipForward, Upload, Users } from 'lucide-react';
+import { ChevronRight, Cloud, CloudOff, Download, FileUp, Repeat, Upload } from 'lucide-react';
 import { useRef, useState } from 'react';
 import Avatar from '@/components/Avatar';
 import Combobox from '@/components/Combobox';
 import NavBar from '@/components/NavBar';
-import { db, exportJson, getSetting, importJson, importStatement, setSetting } from '@/lib/db';
-import { parseStatement } from '@/lib/statement';
+import { db, exportJson, getSetting, importJson, setSetting } from '@/lib/db';
+import { setNav } from '@/lib/nav';
 import { signOut, signOutOthers, supabase, sync } from '@/lib/sync';
 import { ask, download, preferredApp, setPreferredApp, toast, UPI_APPS, vpaError } from '@/lib/ui';
 
 const STATUS = { off: 'Not syncing', syncing: 'Syncing…', synced: 'Synced', offline: 'Offline · syncs when back online' };
-const STEPS = ['Open your bank app or netbanking', 'Account statement → choose dates', 'Download as Excel (XLS/XLSX) or CSV', 'Pick that file here'];
-type Result = { read: number; matched: number; added: number; skipped: number; settled: number } | { error: string };
 
 export default function Me() {
   const [name, setName] = useState(getSetting('my_name'));
   const [vpa, setVpa] = useState(getSetting('my_vpa'));
   const vpaErr = vpaError(vpa);
   const dirty = name.trim() !== getSetting('my_name') || vpa.trim().toLowerCase() !== getSetting('my_vpa');
-  const stmtInput = useRef<HTMLInputElement>(null);
   const backupInput = useRef<HTMLInputElement>(null);
-  const [busy, setBusy] = useState(false);
-  const [result, setResult] = useState<Result | null>(null);
 
   function saveMe() {
     if (vpaErr) return;
@@ -32,25 +27,6 @@ export default function Me() {
   async function endOthers() {
     if (!(await ask('Sign out other devices?', 'Every other phone or laptop signed in to this account goes back to the login screen. This one stays signed in.', 'Sign out others'))) return;
     try { await signOutOthers(); toast('Other devices signed out'); } catch (e) { toast(`Couldn't: ${(e as Error).message}`); }
-  }
-
-  async function importFile() {
-    const f = stmtInput.current?.files?.[0];
-    if (stmtInput.current) stmtInput.current.value = '';
-    if (!f) return;
-    setBusy(true); setResult(null);
-    try {
-      const XLSX = await import('xlsx');
-      const wb = XLSX.read(new Uint8Array(await f.arrayBuffer()), { type: 'array', raw: true });
-      // CSV stays raw text; real Excel date cells are forced day-first, so neither gets read as a US date
-      const rows = wb.SheetNames.flatMap((n) => XLSX.utils.sheet_to_json<string[]>(wb.Sheets[n], { header: 1, raw: false, defval: '', dateNF: 'dd/mm/yyyy' }));
-      const parsed = parseStatement(rows);
-      setResult(parsed.length ? { read: parsed.length, ...importStatement(parsed) }
-        : { error: "Couldn't find transactions in that file. Export it as Excel or CSV from your bank. PDF isn't supported." });
-    } catch (e) {
-      setResult({ error: `Import failed: ${e}` });
-    }
-    setBusy(false);
   }
 
   const backup = () => download(`myupi-backup-${new Date().toISOString().slice(0, 10)}.json`, exportJson());
@@ -64,7 +40,6 @@ export default function Me() {
 
   return (
     <>
-      <input ref={stmtInput} type="file" hidden accept=".xls,.xlsx,.csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv" onChange={importFile} />
       <input ref={backupInput} type="file" hidden accept="application/json,.json" onChange={restore} />
 
       <div className="page">
@@ -118,36 +93,19 @@ export default function Me() {
           </div>
 
           <section>
-            <h2 className="eyebrow">Bank statement</h2>
-            <section className="card">
-              <div className="row" style={{ alignItems: 'flex-start' }}>
-                <span className="mini-icon lime" style={{ width: 44, height: 44, borderRadius: 14 }}><FileUp size={20} /></span>
-                <div className="grow">
-                  <p style={{ fontWeight: 600 }}>Fill in the gaps</p>
-                  <p className="sub">Adds card spends, salary and anything you didn&apos;t record, confirms unconfirmed payments, and marks friends paid when their transfer shows up. Overlapping dates are fine.</p>
-                </div>
-              </div>
-              <button className="btn" style={{ marginTop: 16 }} disabled={busy} onClick={() => stmtInput.current?.click()}><Upload size={18} /> {busy ? 'Reading…' : 'Choose Excel or CSV'}</button>
-            </section>
-
-            {result && ('error' in result ? (
-              <div className="card row" role="alert" style={{ background: 'var(--red-soft)', marginTop: 12 }}><CircleAlert size={20} style={{ color: 'var(--red)' }} /><span className="grow">{result.error}</span></div>
-            ) : (
-              <>
-                <h3 className="eyebrow" aria-live="polite">{result.read} transactions read</h3>
-                <div className="list">
-                  <div className="item"><span className="mini-icon" style={{ color: 'var(--green)' }}><CircleCheck size={17} /></span><span className="grow">Confirmed<br /><span className="sub">Matched to payments already here</span></span><b className="num">{result.matched}</b></div>
-                  <div className="item"><span className="mini-icon"><CirclePlus size={17} /></span><span className="grow">Added<br /><span className="sub">Card spends, transfers, money received</span></span><b className="num">{result.added}</b></div>
-                  {result.settled > 0 && <div className="item"><span className="mini-icon lime"><Users size={17} /></span><span className="grow">Split payments received<br /><span className="sub">Friends&apos; payments marked paid</span></span><b className="num">{result.settled}</b></div>}
-                  <div className="item"><span className="mini-icon"><SkipForward size={17} /></span><span className="grow">Skipped<br /><span className="sub">Already imported earlier</span></span><b className="num">{result.skipped}</b></div>
-                </div>
-              </>
-            ))}
-
-            <details className="steps">
-              <summary className="sub">How to get the file</summary>
-              <ol>{STEPS.map((s) => <li key={s}>{s}</li>)}</ol>
-            </details>
+            <h2 className="eyebrow">Statements and autopays</h2>
+            <div className="list">
+              <button className="item" onClick={() => setNav({ importing: true })}>
+                <span className="mini-icon lime"><FileUp size={17} /></span>
+                <span className="grow">Upload a statement<br /><span className="sub">Bank, PhonePe or super.money · PDF, Excel or CSV</span></span>
+                <ChevronRight size={18} strokeWidth={2.5} className="chev" />
+              </button>
+              <button className="item" onClick={() => setNav({ subs: true })}>
+                <span className="mini-icon"><Repeat size={17} /></span>
+                <span className="grow">Autopays<br /><span className="sub">Subscriptions, EMIs, mandates</span></span>
+                <ChevronRight size={18} strokeWidth={2.5} className="chev" />
+              </button>
+            </div>
 
             <h2 className="eyebrow">Your data</h2>
             <div className="list">
@@ -162,9 +120,6 @@ export default function Me() {
         .acct { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 8px; margin-top: 14px; }
         .me .inset { background: var(--bg); margin-top: 16px; border-radius: 16px; }
         .me .err { padding-left: 112px; }
-        .steps { margin: 12px 4px 0; }
-        .steps summary { cursor: pointer; min-height: 44px; display: flex; align-items: center; }
-        .steps ol { padding-left: 22px; color: var(--sub); font-size: 14px; display: grid; gap: 6px; }
       `}</style>
     </>
   );

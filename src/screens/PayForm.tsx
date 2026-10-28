@@ -1,5 +1,5 @@
 'use client';
-import { CalendarDays, LocateFixed, MapPin, MessageSquareText } from 'lucide-react';
+import { CalendarDays, LocateFixed, MapPin, MessageSquareText, ReceiptText } from 'lucide-react';
 import { useState } from 'react';
 import Avatar from '@/components/Avatar';
 import BillField from '@/components/BillField';
@@ -9,7 +9,7 @@ import Segmented from '@/components/Segmented';
 import Sheet from '@/components/Sheet';
 import SplitEditor from '@/components/SplitEditor';
 import TripField from '@/components/TripField';
-import { addTxn, type Method } from '@/lib/db';
+import { addTxn, tripGroup, type Method } from '@/lib/db';
 import { setNav, type PayDraft } from '@/lib/nav';
 import { useSplit } from '@/lib/split';
 import { canOpenApps, currentPlace, haptic, markOpened, openUpiApp, preferredApp, removeBill, setPreferredApp, toast, toPaise, UPI_APPS, ymd } from '@/lib/ui';
@@ -35,13 +35,13 @@ export default function PayForm({ qr: q, record = false, draft, onClose }: {
   const today = ymd(new Date());
   const [date, setDate] = useState(draft?.date && draft.date <= today ? draft.date : today);
   const [place, setPlace] = useState('');
-  const [trip, setTrip] = useState('');
+  const [trip, setTrip] = useState(draft?.trip ?? '');
   const [locating, setLocating] = useState(false);
   const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(null);
   const [app, setApp] = useState(preferredApp);
 
   const total = toPaise(amount);
-  const split = useSplit(total, draft?.items);
+  const split = useSplit(total, draft?.items, draft?.people);
   const name = payee.trim() || q?.name || '';
   const bad = split.myShare < 0 || split.overItems;
 
@@ -94,7 +94,7 @@ export default function PayForm({ qr: q, record = false, draft, onClose }: {
     <Sheet title="Pay" onClose={cancel} footer={
       <div className="stack" style={{ gap: 4 }}>
         <button className="btn lime" onClick={pay}>Open {app.label}</button>
-        <button className="btn soft" onClick={() => { haptic(); setMode('record'); }}>Add details first, then pay</button>
+        <button className="btn soft" onClick={() => { haptic(); setMode('record'); }}>Fill in details now, pay after</button>
         <button className="btn ghost" onClick={() => { haptic(); setMethod('cash'); setMode('record'); }}>Paid by cash or card instead</button>
       </div>
     }>
@@ -118,11 +118,11 @@ export default function PayForm({ qr: q, record = false, draft, onClose }: {
   );
 
   return (
-    <Sheet full title={draft ? 'From your bill' : q ? `Pay ${q.name}` : 'New entry'} onClose={cancel} footer={<>
+    <Sheet full title={draft?.bill ? 'From your bill' : q ? `Pay ${q.name}` : draft?.trip ? `Add to ${draft.trip}` : 'Add payment'} onClose={cancel} footer={<>
       {split.myShare < 0 && <p className="sub center" style={{ color: 'var(--red)', marginBottom: 6 }}>Shares are more than the total. Lower someone&apos;s share.</p>}
       {payAfter ? (
         <div className="stack" style={{ gap: 4 }}>
-          <button className="btn lime" disabled={bad} onClick={saveAndPay}>Save &amp; pay in {app.label}</button>
+          <button className="btn lime" disabled={bad} onClick={saveAndPay}>Save, then pay in {app.label}</button>
           <button className="btn ghost" disabled={!split.total || bad} onClick={save}>Already paid · Save {split.total ? rupees(split.total) : ''}</button>
         </div>
       ) : <button className="btn" disabled={!split.total || bad} onClick={save}>{split.total ? `Save ${rupees(split.total)}` : 'Enter an amount'}</button>}
@@ -143,10 +143,16 @@ export default function PayForm({ qr: q, record = false, draft, onClose }: {
       {method === 'upi' && direction === 'debit' && (
         <div style={{ marginTop: 10 }}><Combobox label="UPI app" options={UPI_APPS.map((a) => ({ value: a, label: a.label }))} value={app} onChange={setApp} /></div>
       )}
-      {draft && (
-        <p className="hint center" style={{ marginTop: 10 }}>
-          Read from your bill{draft.items?.length ? ` · ${draft.items.length} item${draft.items.length > 1 ? 's' : ''}, ready if you split by item` : ''}. Check it before saving.
-        </p>
+      {draft?.bill && (
+        <div className="card row read">
+          <span className="mini-icon lime"><ReceiptText size={17} /></span>
+          <span className="grow" style={{ fontSize: 15 }}>
+            Read from your bill{draft.items?.length ? `: ${draft.items.length} item${draft.items.length > 1 ? 's' : ''}` : ''}. Check the amount before saving.
+          </span>
+          {!!draft.items?.length && split.mode !== 'items' && direction === 'debit' && (
+            <button className="link" style={{ fontSize: 15, whiteSpace: 'nowrap' }} onClick={() => split.setMode('items')}>Split by item</button>
+          )}
+        </div>
       )}
 
       <div className="reason">
@@ -156,6 +162,15 @@ export default function PayForm({ qr: q, record = false, draft, onClose }: {
 
       <h3 className="eyebrow">Category</h3>
       <CategoryPicker category={category} subcategory={subcategory} onChange={(c, s) => { setCategory(c); setSubcategory(s); }} />
+
+      <h3 className="eyebrow">Trip or event</h3>
+      <div className="list">
+        <TripField value={trip} onChange={(v) => {
+          setTrip(v);
+          const g = v ? tripGroup(v) : undefined; // a trip's people join the split, unless you've already picked who
+          if (g?.memberIds.length && !split.picked.length && direction === 'debit') split.set({ on: true, picked: g.memberIds });
+        }} />
+      </div>
 
       {direction === 'debit' && (
         <>
@@ -176,11 +191,11 @@ export default function PayForm({ qr: q, record = false, draft, onClose }: {
           <span className="grow">Date</span>
           <input type="date" value={date} max={today} onChange={(e) => setDate(e.target.value || today)} aria-label="Date" className="date" />
         </label>
-        <TripField value={trip} onChange={setTrip} />
         <BillField uri={bill} onChange={(u) => { removeBill(bill); setBill(u); }} />
       </div>
       <style jsx>{`
         .date { color: var(--ink); color-scheme: dark; font-size: 16px; }
+        .read { margin-top: 14px; padding: 12px 14px; gap: 10px; }
         .payee-input { width: 100%; font-size: 22px; font-weight: 600; text-align: center; min-height: 56px; margin-top: 6px; letter-spacing: -0.02em; }
         .amount { display: flex; justify-content: center; align-items: flex-start; margin-top: 8px; font-size: 68px; line-height: 1; cursor: text; }
         .amount input { font-size: inherit; text-align: center; max-width: 100%; padding: 0; caret-color: var(--green); }

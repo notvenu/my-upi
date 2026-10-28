@@ -1,5 +1,5 @@
 'use client';
-import { ChartPie, CircleCheck, House, ScanLine, UserRound, Users } from 'lucide-react';
+import { ChartPie, CircleCheck, History as HistoryIcon, House, ScanLine, UserRound, Users } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { logDueSubs, toConfirm } from '@/lib/db';
 import { nav, openPay, setNav, type Tab } from '@/lib/nav';
@@ -10,6 +10,7 @@ import ConfirmSheet from './ConfirmSheet';
 import EditTxn from './EditTxn';
 import History from './History';
 import Home from './Home';
+import Import from './Import';
 import Insights from './Insights';
 import Login from './Login';
 import Me from './Me';
@@ -21,6 +22,7 @@ import Subs from './Subs';
 
 const TABS = [
   { key: 'home', label: 'Home', icon: House },
+  { key: 'history', label: 'History', icon: HistoryIcon },
   { key: 'insights', label: 'Insights', icon: ChartPie },
   { key: 'people', label: 'People', icon: Users },
   { key: 'me', label: 'You', icon: UserRound },
@@ -89,17 +91,17 @@ export default function App() {
     if (!askState.q && d?.open) d.close();
   });
 
-  // Laptop shortcuts, when not typing and nothing is open: 1–4 tabs, S scan, N new entry, H history, A autopays.
+  // Laptop shortcuts, when not typing and nothing is open: 1–5 tabs, S scan, N new entry, H history, A autopays, I import a statement.
   useEffect(() => {
     const shortcut = (e: KeyboardEvent) => {
       if (e.ctrlKey || e.metaKey || e.altKey || chrome.sheets || askState.q || !sync.checked || (supabase && !sync.email)) return;
       if ((e.target as HTMLElement).closest('input, textarea, select, [contenteditable]')) return;
       const k = e.key.toLowerCase();
-      const tab = ({ 1: 'home', 2: 'insights', 3: 'people', 4: 'me', s: 'scan' } as Record<string, Tab>)[k];
+      const tab = ({ 1: 'home', 2: 'history', 3: 'insights', 4: 'people', 5: 'me', h: 'history', s: 'scan' } as Record<string, Tab>)[k];
       if (tab) goTabRef.current(tab);
       else if (k === 'n') openPay(null, true);
-      else if (k === 'h') setNav({ history: true });
       else if (k === 'a') setNav({ subs: true });
+      else if (k === 'i') setNav({ importing: true });
       else return;
       e.preventDefault();
     };
@@ -116,6 +118,7 @@ export default function App() {
             <main ref={main} onScroll={(e) => setScrollY(e.currentTarget.scrollTop)}>
               <div key={nav.tab} className="tab-view">
                 {nav.tab === 'home' ? <Home goTab={goTab} />
+                  : nav.tab === 'history' ? <History />
                   : nav.tab === 'insights' ? <Insights />
                   : nav.tab === 'scan' ? <Scan />
                   : nav.tab === 'people' ? <People />
@@ -146,7 +149,7 @@ export default function App() {
           </div>
 
           {nav.pay && <PayForm qr={nav.pay.qr} record={nav.pay.record} draft={nav.pay.draft} onClose={(saved) => { setNav({ pay: null }); if (saved) goTab('home'); }} />}
-          {nav.history && <History onClose={() => setNav({ history: false })} />}
+          {nav.importing && <Import onClose={() => setNav({ importing: false })} />}
           {nav.subs && <Subs onClose={() => setNav({ subs: false })} />}
           {nav.confirming && <ConfirmSheet focus={nav.confirmId} onClose={() => setNav({ confirming: false, confirmId: null })} />}
           {nav.editing && <EditTxn key={nav.editing.id} t={nav.editing} onClose={() => setNav({ editing: null })} />}

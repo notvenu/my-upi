@@ -1,11 +1,10 @@
 'use client';
-import { Banknote, Camera, ChevronRight, ImageUp, ReceiptText, ScanLine, Zap } from 'lucide-react';
+import { Camera, ImageUp, PenLine, QrCode, ReceiptText, ScanLine, Zap } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import Avatar from '@/components/Avatar';
 import NavBar from '@/components/NavBar';
-import Segmented from '@/components/Segmented';
 import { listPeople } from '@/lib/db';
-import { openPay } from '@/lib/nav';
+import { nav, openPay } from '@/lib/nav';
 import { readBill } from '@/lib/ocr';
 import { haptic, saveBill, toast } from '@/lib/ui';
 import { parseUpiQr, personQr } from '@/lib/upi';
@@ -44,8 +43,9 @@ export default function Scan() {
   const video = useRef<HTMLVideoElement>(null);
   const file = useRef<HTMLInputElement>(null);
   const track = useRef<MediaStreamTrack | null>(null);
-  const [mode, setMode] = useState<Mode>('qr');
-  const modeRef = useRef<Mode>('qr');
+  const [mode, setMode] = useState<Mode>(nav.scanMode);
+  nav.scanMode = 'qr'; // Home's "Scan bill" opens on the bill side once; the tab itself opens on QR
+  const modeRef = useRef<Mode>(mode);
   modeRef.current = mode;
   const [camState, setCamState] = useState<'starting' | 'on' | 'denied' | 'none'>(navigator.mediaDevices ? 'starting' : 'none');
   const [torch, setTorch] = useState(false);
@@ -118,14 +118,12 @@ export default function Scan() {
 
   const status = camState === 'denied' ? 'Allow camera access in your browser settings'
     : camState === 'none' ? 'No camera here. Pick a photo instead.'
-    : mode === 'qr' ? 'Point at a UPI QR. It opens by itself.' : 'Fit the whole bill in the frame, then tap the shutter';
+    : mode === 'qr' ? 'Point at a UPI QR' : 'Fit the whole bill in the frame';
+  const pickMode = (m: Mode) => { if (m !== mode) { haptic(); setMode(m); } };
 
   return (
     <div className="page">
       <NavBar title="Scan" />
-      <div style={{ marginBottom: 14 }}>
-        <Segmented options={[['qr', 'Pay a QR'], ['bill', 'Scan a bill']] as const} value={mode} onChange={setMode} label="What to scan" />
-      </div>
       <input ref={file} type="file" accept="image/*" hidden onChange={fromImage} />
 
       <div className="split">
@@ -133,8 +131,13 @@ export default function Scan() {
           <div className={`cam ${mode}`}>
             <video ref={video} autoPlay playsInline muted className={camState === 'on' ? 'on' : ''} />
             <div className={`finder${camState === 'on' && reading === null ? ' live' : ''}`}><i /><i /><i /><i /></div>
-            <p className="status">{status}</p>
+            <p className="status" aria-live="polite">{status}</p>
             {camState === 'on' && <button className={`torch${torch ? ' lit' : ''}`} aria-label="Torch" aria-pressed={torch} onClick={toggleTorch}><Zap size={18} /></button>}
+            {/* what to scan, on the camera like a camera app's mode switch */}
+            <div className="modes" role="tablist" aria-label="What to scan">
+              <button role="tab" aria-selected={mode === 'qr'} onClick={() => pickMode('qr')}><QrCode size={16} /> Pay a QR</button>
+              <button role="tab" aria-selected={mode === 'bill'} onClick={() => pickMode('bill')}><ReceiptText size={16} /> Scan a bill</button>
+            </div>
             {reading !== null && (
               <div className="reading" role="status">
                 <ReceiptText size={28} />
@@ -146,64 +149,47 @@ export default function Scan() {
 
           <div className="controls">
             <button className="ctl" onClick={() => file.current?.click()} disabled={reading !== null}>
-              <ImageUp size={20} /><span>{mode === 'qr' ? 'QR screenshot' : 'Choose photo'}</span>
+              <span className="round"><ImageUp size={20} /></span><span>{mode === 'qr' ? 'From photo' : 'From gallery'}</span>
             </button>
             {mode === 'bill'
-              ? <button className="shutter" aria-label="Take photo of the bill" disabled={camState !== 'on' || reading !== null} onClick={snap}><Camera size={26} /></button>
-              : <span className="shutter idle" aria-hidden="true"><ScanLine size={26} /></span>}
-            <button className="ctl" onClick={() => openPay(null, true)}><Banknote size={20} /><span>Cash or card</span></button>
+              ? <button className="shutter" aria-label="Take photo of the bill" disabled={camState !== 'on' || reading !== null} onClick={snap}><Camera size={28} /></button>
+              : <span className="shutter idle" aria-hidden="true"><ScanLine size={28} /></span>}
+            <button className="ctl" onClick={() => openPay(null, true)}>
+              <span className="round"><PenLine size={20} /></span><span>Type it in</span>
+            </button>
           </div>
+          <p className="hint center" style={{ margin: '12px 16px 0' }}>
+            {mode === 'qr' ? 'It opens by itself when it sees a UPI QR.' : 'Shop, date, total and every item are read on this device. Then split it, or not.'}
+          </p>
         </div>
 
         <section>
-          {mode === 'qr' ? (
+          {mode === 'qr' && payable.length > 0 && (
             <>
-              {payable.length > 0 && (
-                <>
-                  <h3 className="eyebrow">Pay someone saved</h3>
-                  <div className="people">
-                    {payable.map((p) => (
-                      <button key={p.id} className="person" onClick={() => { haptic(); openPay(personQr(p.vpa!, p.name)); }} aria-label={`Pay ${p.name}`}>
-                        <Avatar name={p.name} size={52} />
-                        <span className="ellipsis">{p.name.split(' ')[0]}</span>
-                      </button>
-                    ))}
-                  </div>
-                </>
-              )}
-              <div className="list" style={{ marginTop: 14 }}>
-                <button className="item" onClick={() => { haptic(); setMode('bill'); }}>
-                  <span className="mini-icon lime"><ReceiptText size={17} /></span>
-                  <span className="grow"><b style={{ fontWeight: 600 }}>Got a bill?</b><br /><span className="sub">Scan it to fill in the shop, total and items</span></span>
-                  <ChevronRight size={18} strokeWidth={2.5} className="chev" />
-                </button>
+              <h3 className="eyebrow">Pay someone saved</h3>
+              <div className="people">
+                {payable.map((p) => (
+                  <button key={p.id} className="person" onClick={() => { haptic(); openPay(personQr(p.vpa!, p.name)); }} aria-label={`Pay ${p.name}`}>
+                    <Avatar name={p.name} size={52} />
+                    <span className="ellipsis">{p.name.split(' ')[0]}</span>
+                  </button>
+                ))}
               </div>
             </>
-          ) : (
-            <div className="card how">
-              <p style={{ fontWeight: 600 }}>From a bill to a split in one go</p>
-              <ol className="sub">
-                <li>Snap the bill, flat and well lit.</li>
-                <li>MyUPI reads the shop, date, total and each item, right on this device.</li>
-                <li>Check what it read, then keep it for yourself, split it equally, or tap whose each item was.</li>
-              </ol>
-              <p className="hint" style={{ margin: '10px 0 0' }}>The photo is saved with the entry.</p>
-            </div>
           )}
         </section>
       </div>
 
       <style jsx>{`
-        /* the camera sits in a card, not edge to edge */
-        .cam { position: relative; overflow: hidden; border-radius: 28px; background: #000; aspect-ratio: 4 / 5; max-height: 54vh; width: 100%;
-          box-shadow: inset 0 0 0 .5px rgb(255 255 255 / .08); transition: aspect-ratio .4s var(--ease); }
-        .cam.bill { aspect-ratio: 3 / 4; }
+        /* the camera fills most of the screen, controls float on it */
+        .cam { position: relative; overflow: hidden; border-radius: 30px; background: #000; height: min(64dvh, 620px); width: 100%;
+          box-shadow: inset 0 0 0 .5px rgb(255 255 255 / .08); }
         video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; opacity: 0; transition: opacity .4s; }
         video.on { opacity: 1; }
         /* the frame: a square for a QR, a tall page for a bill; everything outside it is dimmed */
-        .finder { position: absolute; left: 50%; top: 54%; translate: -50% -50%; width: 62%; aspect-ratio: 1; border-radius: 26px;
+        .finder { position: absolute; left: 50%; top: 46%; translate: -50% -50%; width: min(62%, 300px); aspect-ratio: 1; border-radius: 26px;
           box-shadow: 0 0 0 100vmax rgb(0 0 0 / .45); transition: width .4s var(--ease), aspect-ratio .4s var(--ease); }
-        .bill .finder { width: 72%; aspect-ratio: 3 / 4; border-radius: 18px; }
+        .bill .finder { width: min(70%, 340px); aspect-ratio: 3 / 4; border-radius: 18px; }
         .finder i { position: absolute; width: 36px; height: 36px; border: 4px solid var(--lime); }
         .finder i:nth-child(1) { top: 0; left: 0; border-right: 0; border-bottom: 0; border-top-left-radius: 22px; }
         .finder i:nth-child(2) { top: 0; right: 0; border-left: 0; border-bottom: 0; border-top-right-radius: 22px; }
@@ -212,20 +198,28 @@ export default function Scan() {
         .finder.live { animation: breathe 2.4s ease-in-out infinite; }
         @keyframes breathe { 50% { scale: 1.025; } }
         /* fixed white: always on top of the dark camera */
-        .status { position: absolute; left: 14px; right: 64px; top: 14px; text-align: left; color: #fff; font-size: 14px; font-weight: 500;
-          padding: 10px 14px; border-radius: 999px; background: rgb(0 0 0 / .5); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); }
-        .torch { position: absolute; top: 14px; right: 14px; width: 42px; height: 42px; border-radius: 50%; display: grid; place-items: center; background: rgb(0 0 0 / .45); color: #fff; }
+        .status { position: absolute; left: 50%; translate: -50% 0; top: 14px; max-width: calc(100% - 120px); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+          color: #fff; font-size: 14px; font-weight: 500; padding: 9px 14px; border-radius: 999px; background: rgb(0 0 0 / .5);
+          backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); }
+        .torch { position: absolute; top: 10px; right: 10px; width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center; background: rgb(0 0 0 / .45); color: #fff; }
         .torch.lit { background: #fff; color: #000; }
+        .modes { position: absolute; left: 50%; bottom: 14px; translate: -50% 0; display: flex; gap: 2px; padding: 3px; border-radius: 999px;
+          background: rgb(0 0 0 / .55); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); box-shadow: inset 0 0 0 .5px rgb(255 255 255 / .12); }
+        .modes button { display: flex; align-items: center; gap: 6px; min-height: 40px; padding: 0 14px; border-radius: 999px; color: #fff;
+          font-size: 14px; font-weight: 600; white-space: nowrap; opacity: .75; transition: background .25s, color .25s, opacity .2s; }
+        .modes button[aria-selected='true'] { background: var(--lime); color: var(--on-lime); opacity: 1; }
         .reading { position: absolute; inset: 0; display: grid; place-content: center; justify-items: center; gap: 10px; color: #fff; background: rgb(0 0 0 / .72);
           backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); }
         .reading p { font-weight: 600; }
         .bar { width: 180px; height: 6px; border-radius: 3px; background: rgb(255 255 255 / .2); overflow: hidden; }
         .bar i { display: block; height: 100%; background: var(--lime); transition: width .3s; }
         .controls { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 12px; margin-top: 16px; }
-        .ctl { display: grid; justify-items: center; gap: 6px; font-size: 13px; font-weight: 500; color: var(--sub); padding: 8px 0; border-radius: 16px; }
-        .ctl:active:not(:disabled) { background: var(--pressed); }
+        .ctl { display: grid; justify-items: center; gap: 6px; font-size: 13px; font-weight: 500; color: var(--sub); padding: 4px 0; }
+        .round { width: 48px; height: 48px; border-radius: 50%; display: grid; place-items: center; background: var(--card); color: var(--ink);
+          box-shadow: inset 0 0 0 .5px rgb(255 255 255 / .08); transition: transform .3s var(--spring), background .2s; }
+        .ctl:active:not(:disabled) .round { transform: scale(.9); background: var(--pressed); }
         .ctl:disabled { opacity: .4; }
-        .shutter { width: 72px; height: 72px; border-radius: 50%; display: grid; place-items: center; background: var(--lime); color: var(--on-lime);
+        .shutter { width: 76px; height: 76px; border-radius: 50%; display: grid; place-items: center; background: var(--lime); color: var(--on-lime);
           box-shadow: 0 0 0 4px var(--bg), 0 0 0 6px var(--lime); transition: transform .3s var(--spring); }
         .shutter:active:not(:disabled) { transform: scale(.9); }
         .shutter:disabled { opacity: .4; }
@@ -233,8 +227,7 @@ export default function Scan() {
         .people { display: flex; gap: 4px; overflow-x: auto; scrollbar-width: none; }
         .person { display: grid; justify-items: center; gap: 6px; width: 68px; flex-shrink: 0; font-size: 12.5px; font-weight: 500; }
         .person span { max-width: 64px; }
-        .how ol { margin: 10px 0 0; padding-left: 20px; display: grid; gap: 6px; font-size: 14px; }
-        @media (min-width: 1100px) { .cam { max-height: 72vh; } }
+        @media (min-width: 1100px) { .cam { height: min(74vh, 760px); } }
       `}</style>
     </div>
   );
