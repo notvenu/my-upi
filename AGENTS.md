@@ -1,41 +1,35 @@
-This is an Expo/React Native mobile application. Prioritize mobile-first patterns, performance, and cross-platform compatibility.
-
-## Expo has changed — do not trust your training data
-
-Expo ships breaking changes every SDK release. APIs you remember are likely renamed, moved, or removed. Before writing any code that touches an Expo, EAS, or React Native API:
-
-1. Read the major version of the `expo` package in `package.json`.
-2. Fetch the matching versioned docs: `https://docs.expo.dev/versions/v<major>.0.0/`
-3. For anything else, fetch https://docs.expo.dev/llms.txt — an index of all Expo docs with corrections to common LLM misconceptions. Follow its links to the specific page you need; never answer from memory.
+MyUPI is a Next.js (App Router) + React + TypeScript website, mobile-first but used on a laptop too. Data lives in the browser
+and syncs to Supabase when signed in. No native app: no Expo, React Native, Capacitor, Svelte or Vite.
 
 ## Commands
 
-Use `bunx` instead of `npx` if the project uses bun (`bun.lock` present).
-
 ```bash
-npx expo install <package>  # ALWAYS use instead of npm/yarn/pnpm/bun add — resolves SDK-compatible versions
-npx expo start              # start the dev server
-npx expo lint               # lint
-npx tsc --noEmit            # typecheck
-npx expo-doctor             # diagnose dependency and config issues
-npx expo install --fix      # fix incompatible package versions
+npm install
+npm run dev     # dev server, http://localhost:3000
+npm test        # logic checks in src/lib/check.ts (plain node, no framework)
+npm run check   # tsc
+npm run build   # production build (also type-checks)
 ```
 
-Run lint and typecheck before declaring any task done.
+Run `npm test` and `npm run build` before declaring any task done.
 
-## Navigation & Routing
+## Conventions
 
-- Use **Expo Router** for all navigation. Routes live in `src/app/` — every file there is a screen, `_layout.tsx` files define navigators. Keep non-route code (components, hooks, utils) outside `src/app/`.
-- Import `Link`, `router`, and `useLocalSearchParams` from `expo-router`.
-- Docs: https://docs.expo.dev/router/introduction.md
+- `src/app/`: routes only (`/` the app, `/s/[id]` a public split link). Both render client-only through `components/AppLoader` / `ShareLoader` (`dynamic(..., { ssr: false })`), because the app reads localStorage on load.
+- `src/screens/` screens and sheets, `src/components/` shared pieces, `src/lib/` logic and state.
+- State: plain objects in `lib/db.ts`, `nav.ts`, `ui.ts`, `sync.ts`; every change calls `emit()` (`lib/store.ts`) and the app root re-renders. Data writes go through `db.ts` functions, which call `save()`: persist locally, emit, sync.
+- Pure logic (money maths, parsing, split links) lives in plain `.ts` files under `src/lib/` and gets an assertion in `check.ts`.
+- Component styles: scoped `<style jsx>` (styled-jsx, built into Next); shared tokens and utility classes in `src/app/globals.css`. Dark theme only.
+- Sheets use `components/Sheet.tsx` (mark the field to focus with `data-autofocus`); choices with more than a few options use `components/Combobox.tsx`.
+- New ids come from `nextId()` (time-based) so devices never collide.
+- Supabase schema changes go in `supabase/schema.sql` (idempotent, re-runnable). Env: `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY` (see `.env.example`).
 
-## Building with EAS
+<!-- BEGIN:nextjs-agent-rules -->
 
-Use EAS to build, sign, and submit the app in the cloud (`eas build`, `eas submit`) and to ship over-the-air updates (`eas update`) — no local Xcode or Android Studio required. Run EAS CLI as `bunx eas-cli <command>` in Bun projects, or `npx eas-cli@latest <command>` otherwise; substitute that for bare `eas` in docs examples.
-Docs: https://docs.expo.dev/eas/index.md
+## This is NOT the Next.js you know
 
-## Rules
+This version has breaking changes — APIs, conventions, and file structure may all differ from your training data. Read the relevant guide in `node_modules/next/dist/docs/` (resolved from this file's directory; in monorepos the `next` package may not be visible from the repo root) before writing any code. Heed deprecation notices.
 
-- If `ios/` and `android/` directories do not exist, they are generated (Continuous Native Generation). Never create or edit them by hand — configure native behavior in `app.json` and config plugins.
-- Expo Go only includes its bundled native modules. After adding a library with native code, the app needs a development build: `npx expo run:ios|android` locally, or `eas build --profile development`.
-- Prefer recommended Expo modules over third-party libraries, and check your available skills before adding dependencies. Docs: https://docs.expo.dev/versions/latest/index.md
+This block is written and re-added by `next dev` — verify at `node_modules/next/dist/server/lib/generate-agent-files.js`. Removing it from a diff only re-creates the uncommitted change; committing it with your work keeps the tree clean.
+
+<!-- END:nextjs-agent-rules -->

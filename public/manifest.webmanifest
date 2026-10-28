@@ -1,0 +1,13 @@
+{
+  "name": "MyUPI",
+  "short_name": "MyUPI",
+  "description": "Record every UPI payment with its reason, split it with friends, and see where the money went.",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#050505",
+  "theme_color": "#050505",
+  "icons": [
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}
