@@ -42,13 +42,14 @@ export class Split {
 }
 
 // items: a scanned bill's lines, ready for "By item". people: a trip's people, so it starts split equally between them.
-export function useSplit(total: number, items?: { name: string; amount: number }[], people?: number[]): Split {
+export function useSplit(total: number, items?: { name: string; amount: number; who?: number[] }[], people?: number[]): Split {
   const [, rerender] = useReducer((n: number) => n + 1, 0);
   const ref = useRef<Split>(null);
   if (!ref.current) {
     ref.current = new Split(rerender);
-    ref.current.items = (items ?? []).map((it) => ({ name: it.name, amount: String(it.amount / 100), who: [] }));
+    ref.current.items = (items ?? []).map((it) => ({ name: it.name, amount: String(it.amount / 100), who: it.who ?? [] }));
     if (people?.length) Object.assign(ref.current, { on: true, picked: people });
+    if (items?.some((it) => it.who?.length)) Object.assign(ref.current, { on: true, byItem: true }); // a note said who had what
   }
   ref.current.base = total;
   return ref.current;

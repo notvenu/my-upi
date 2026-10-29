@@ -1,12 +1,124 @@
 'use client';
-import { ChevronRight, Clock, FileText, FileUp, Luggage, Plus, ReceiptText, Repeat, Send, Smartphone } from 'lucide-react';
+import { ArrowUp, ChevronRight, Clock, FileText, FileUp, Luggage, Plus, ReceiptText, Repeat, Send, Smartphone, Sparkles } from 'lucide-react';
+import { useEffect, useState } from 'react';
 import Avatar from '@/components/Avatar';
 import NavBar from '@/components/NavBar';
 import TxnRow from '@/components/TxnRow';
-import { getSetting, listSubs, listTrips, monthTxns, toConfirm, unpaidSplits } from '@/lib/db';
+import { ME } from '@/lib/calc';
+import { getSetting, listGroups, listPeople, listSubs, listTrips, monthTxns, toConfirm, unpaidSplits } from '@/lib/db';
 import { openPay, setNav, type Tab } from '@/lib/nav';
-import { canOpenApps, haptic, longDate, preferredApp, shortDate, spentOf, ym, ymd } from '@/lib/ui';
+import { readNote } from '@/lib/ocr';
+import { peek, whoFor } from '@/lib/receipt';
+import { canOpenApps, haptic, longDate, preferredApp, shortDate, spentOf, toast, ym, ymd } from '@/lib/ui';
 import { rupees } from '@/lib/upi';
+
+// Type or paste a note in any shape ("tomatoes 70 onions 60 palak 20, palak for me rest for all");
+// Gemini reads it and the payment form opens filled in, so it's confirmed before saving.
+function QuickNote() {
+  const [text, setText] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [step, setStep] = useState(0); // which loader caption is showing
+  const said = /roommate|split|share|with|for (me|all|every)/i.test(text);
+  const captions = ['Spotting the rupees…', 'Adding it up…', ...(said ? ['Working out who had what…'] : []), 'Picking a category…', 'Almost there…'];
+  const bits = busy ? peek(text) : [];
+  useEffect(() => {
+    if (!busy) return;
+    setStep(0);
+    const t = setInterval(() => setStep((s) => s + 1), 1100);
+    return () => clearInterval(t);
+  }, [busy]);
+  async function send() {
+    if (!text.trim() || busy) return;
+    haptic();
+    setBusy(true);
+    try {
+      const people = listPeople(), groups = listGroups();
+      const r = await readNote(text, [...groups, ...people].map((x) => x.name));
+      const items = r.items.map((it) => ({ name: it.name, amount: it.amount, who: whoFor(it.for, people, groups) }));
+      // everyone in it: who it's shared "with", plus anyone an item names
+      const named = [...new Set([...whoFor(r.with, people, groups), ...items.flatMap((it) => it.who)].filter((id) => id !== ME))];
+      if (!r.total && !items.length) { toast('No amounts in that note'); return; }
+      openPay(null, true, { payee: r.shop, amount: r.total || items.reduce((a, it) => a + it.amount, 0), items, date: r.date,
+        category: r.category, place: r.place, method: r.method, note: r.note, people: named });
+      setText('');
+    } catch (e) {
+      toast((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <form className={`note${busy ? ' busy' : ''}`} onSubmit={(e) => { e.preventDefault(); send(); }}>
+      <div className="body">
+        {/* reading: the note blurs away and folds up, and its items take its place */}
+        <div className="unfold"><div className="fold">
+          <textarea value={text} onChange={(e) => setText(e.target.value)} rows={2} aria-label="Write what you spent" disabled={busy}
+            placeholder="Write it like a note: tomatoes 70, onions 60, palak 20. Palak for me, rest for all"
+            onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) send(); }} />
+        </div></div>
+        {busy && (
+          // while Gemini reads: the note's own items pop out one by one, then the running total
+          <div className="peek" role="status">
+            {bits.length ? (
+              <div className="chips">
+                {bits.map((b, i) => <span key={i} className="chip" style={{ animationDelay: `${0.3 + i * 0.28}s` }}>{b.name} <b className="num">{rupees(b.amount)}</b></span>)}
+                {bits.length > 1 && <span className="chip sum" style={{ animationDelay: `${0.45 + bits.length * 0.28}s` }}>= <b className="num">{rupees(bits.reduce((a, b) => a + b.amount, 0))}</b></span>}
+              </div>
+            ) : <div className="dots" aria-hidden="true"><i /><i /><i /></div>}
+            <p key={Math.min(step, captions.length - 1)} className="caption">{captions[Math.min(step, captions.length - 1)]}</p>
+          </div>
+        )}
+      </div>
+      <button type="submit" aria-label="Read note" disabled={busy || !text.trim()}>
+        {busy ? <Sparkles size={19} className="twinkle" /> : <ArrowUp size={20} strokeWidth={2.4} />}
+      </button>
+      <style jsx>{`
+        .note { position: relative; isolation: isolate; overflow: hidden; display: flex; align-items: flex-end; gap: 8px; margin-top: 12px;
+          padding: 10px 10px 10px 16px; border-radius: 24px; background: var(--card); box-shadow: inset 0 0 0 .5px rgb(255 255 255 / .05); }
+        /* reading: the same card, with a faint light sweeping across it */
+        .note.busy::before { content: ''; position: absolute; inset: 0; z-index: -1; pointer-events: none;
+          background: linear-gradient(100deg, transparent 35%, color-mix(in srgb, var(--lime) 9%, transparent) 50%, transparent 65%) 0 0 / 250% 100%;
+          animation: sweep 1.8s linear infinite; }
+        @keyframes sweep { from { background-position: 100% 0; } to { background-position: -150% 0; } }
+        .body { flex: 1; min-width: 0; }
+        .unfold { display: grid; grid-template-rows: 1fr; transition: grid-template-rows .45s var(--ease) .1s; }
+        .busy .unfold { grid-template-rows: 0fr; }
+        .fold { min-height: 0; overflow: hidden; }
+        textarea { display: block; width: 100%; min-height: 44px; resize: none; max-height: 40dvh; padding: 10px 0; font: inherit; font-size: 16px;
+          color: var(--ink); background: none; border: 0; outline: 0; field-sizing: content; transition: filter .4s, opacity .4s; }
+        .busy textarea { filter: blur(6px); opacity: 0; }
+        textarea::placeholder { color: var(--sub); }
+        button { width: 40px; height: 40px; flex-shrink: 0; border-radius: 50%; display: grid; place-items: center; background: var(--lime); color: var(--on-lime);
+          transition: transform .3s var(--spring), opacity .2s; }
+        button:active:not(:disabled) { transform: scale(.9); }
+        button:disabled { opacity: .35; }
+        .busy button:disabled { opacity: 1; }
+        .busy button :global(.twinkle) { animation: twinkle 1.1s var(--ease) infinite; }
+        @keyframes twinkle { 50% { scale: .75; rotate: 20deg; opacity: .6; } }
+        .peek { display: grid; gap: 8px; padding: 6px 0 4px; }
+        .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+        .chip { padding: 5px 10px; border-radius: 999px; font-size: 13px; text-transform: capitalize; background: var(--raised); color: var(--ink);
+          opacity: 0; animation: pop .45s var(--spring) forwards; }
+        .chip b { color: var(--lime); font-weight: 600; }
+        .chip.sum { background: var(--lime); color: var(--on-lime); }
+        .chip.sum b { color: inherit; }
+        @keyframes pop { from { opacity: 0; transform: translateY(8px) scale(.6); } to { opacity: 1; transform: none; } }
+        .dots { display: flex; gap: 6px; padding: 6px 2px; }
+        .dots i { width: 7px; height: 7px; border-radius: 50%; background: var(--lime); animation: hop .9s var(--ease) infinite; }
+        .dots i:nth-child(2) { animation-delay: .15s; }
+        .dots i:nth-child(3) { animation-delay: .3s; }
+        @keyframes hop { 30% { transform: translateY(-6px); opacity: .5; } }
+        .caption { font-size: 13px; color: var(--sub); animation: fade .35s var(--ease); }
+        @keyframes fade { from { opacity: 0; transform: translateY(4px); } }
+        @media (prefers-reduced-motion: reduce) {
+          .note.busy::before { animation: none; }
+          .unfold, textarea { transition: none; }
+          .chip, .caption, .dots i, .busy button :global(.twinkle) { animation: none; opacity: 1; }
+        }
+      `}</style>
+    </form>
+  );
+}
 
 export default function Home({ goTab }: { goTab: (t: Tab) => void }) {
   const today = ymd(new Date());
@@ -49,6 +161,7 @@ export default function Home({ goTab }: { goTab: (t: Tab) => void }) {
             <button className="action" onClick={() => { haptic(); setNav({ importing: true }); }}><FileUp size={22} /><span>Statement</span></button>
             {canOpenApps && <button className="action" onClick={() => { haptic(); openPay(null); }}><Smartphone size={22} /><span>Open {app.label}</span></button>}
           </div>
+          <QuickNote />
 
           {(pending.length > 0 || dueNow.length > 0 || unconfirmed > 0) && (
             <div className="list" style={{ marginTop: 14 }}>

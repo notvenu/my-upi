@@ -91,7 +91,7 @@ export default function Scan() {
       const r = await readBill(img, setReading);
       if (!r.total && !r.items.length) toast("Couldn't read much from that bill. Fill in what's missing.");
       haptic(30);
-      openPay(null, true, { payee: r.shop, amount: r.total || r.items.reduce((a, it) => a + it.amount, 0), items: r.items, bill: uri, date: r.date });
+      openPay(null, true, { payee: r.shop, amount: r.total || r.items.reduce((a, it) => a + it.amount, 0), items: r.items, bill: uri, date: r.date, category: r.category, place: r.place });
     } catch (e) {
       toast(navigator.onLine ? `Couldn't read the bill: ${(e as Error).message}` : 'Reading a bill needs internet the first time, to download the reader.');
     }
@@ -159,7 +159,7 @@ export default function Scan() {
             </button>
           </div>
           <p className="hint center" style={{ margin: '12px 16px 0' }}>
-            {mode === 'qr' ? 'It opens by itself when it sees a UPI QR.' : 'Shop, date, total and every item are read on this device. Then split it, or not.'}
+            {mode === 'qr' ? 'It opens by itself when it sees a UPI QR.' : 'Shop, date, total and every item are read for you. Then split it, or not.'}
           </p>
         </div>
 

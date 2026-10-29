@@ -167,7 +167,7 @@ assert.deepEqual(settleFromCredits([{ amount: 6000, desc: 'NEFT PRIYANKA' }], ow
 console.log('share and settle checks passed');
 
 // ── reading a bill photo's OCR text ──
-import { parseReceipt } from './receipt.ts';
+import { fromGemini, parseReceipt, peek, whoFor } from './receipt.ts';
 const grocery = parseReceipt(`
 SRI BALAJI SUPERMARKET
 #12, 5th Cross, Koramangala
@@ -195,6 +195,28 @@ assert.deepEqual(grocery.items, [
 const cafe = parseReceipt('Third Wave Coffee\nCappuccino 220\nCroissant 180\nTOTAL 400');
 assert.deepEqual([cafe.shop, cafe.total, cafe.items.length], ['Third Wave Coffee', 40000, 2]);
 assert.equal(parseReceipt('blurry\n\n12.50\n99.00').total, 9900); // no total line: the largest amount
+const gem = fromGemini({ shop: 'Cafe Noir', place: '', date: '2026-10-26', total: 340.5, category: 'Food',
+  items: [{ name: 'Latte', amount: 180 }, { name: '', amount: 10 }, { name: 'Tip', amount: -5 }] });
+assert.deepEqual(gem, { shop: 'Cafe Noir', date: '2026-10-26', total: 34050, items: [{ name: 'Latte', amount: 18000 }], category: 'Food', place: undefined, method: undefined, note: undefined });
+assert.deepEqual(fromGemini({ date: '26/10/2026', category: 'Bribes', total: '9' }), { shop: '', date: null, total: 0, items: [], category: undefined, place: undefined, method: undefined, note: undefined });
+const note = fromGemini({ shop: '', total: 150, items: [{ name: 'Palak', amount: 20, for: ['me'] }, { name: 'Tomatoes', amount: 70, for: ['all'] }], method: 'cash', note: 'Veggies' });
+assert.deepEqual([note.method, note.note, note.items[0].for], ['cash', 'Veggies', ['me']]);
+const folks = [{ id: 3, name: 'Priya Nair' }, { id: 5, name: 'Ravi' }];
+assert.deepEqual(whoFor(['me'], folks), [0]);
+assert.deepEqual(whoFor(['priya', 'Me', 'Ghost'], folks), [3, 0]); // first name works, unknown names drop
+assert.deepEqual(whoFor(['all'], folks), []);
+assert.deepEqual(whoFor(undefined, folks), []);
+const flat = [{ name: 'Roommates', memberIds: [3, 5] }];
+assert.deepEqual(whoFor(['roommates'], folks, flat), [0, 3, 5]); // a group is you plus its members
+assert.deepEqual(whoFor(['Roommate', 'Ravi'], folks, flat), [0, 3, 5]);
+assert.deepEqual(whoFor(['room mates'], folks, flat), [0, 3, 5]); // spacing and typos forgiven
+assert.deepEqual(whoFor(['roomates'], folks, flat), [0, 3, 5]);
+assert.deepEqual(whoFor(['prya'], folks), [3]);
+assert.deepEqual(whoFor(['Raju'], folks), []); // two letters off a short name: not Ravi
+assert.deepEqual(fromGemini({ total: 90, with: ['roommates', ''] }).with, ['roommates']);
+assert.deepEqual(peek('now tomatoes 70 onions 60, palak: ₹20 for me'), [
+  { name: 'tomatoes', amount: 7000 }, { name: 'onions', amount: 6000 }, { name: 'palak', amount: 2000 },
+]);
 console.log('bill checks passed');
 
 // ── statement PDFs: UPI app text, bank tables with empty cells, payee names ──
