@@ -168,13 +168,13 @@ assert.equal(methodFromDesc('CASH DEP'), null);
 console.log('split and autopay checks passed');
 
 // ── split links and paying back ──
-import { buildShare } from './share.ts';
+import { buildShare, ledger } from './share.ts';
 import { settleFromCredits } from './calc.ts';
 const T = (id: number, amount: number, created_at: string, note: string, extra: object = {}) =>
   ({ id, amount, created_at, note, status: 'SUCCESS', payee_name: null, subcategory: null, category: 'Other', trip: null, ...extra }) as never;
 const S = (id: number, txn_id: number, person_id: number, amount: number, paid = false) =>
   ({ id, txn_id, person_id, name: '', phone: null, amount, requested_at: null, paid_at: paid ? 'x' : null }) as never;
-const room = buildShare({ title: 'Room', personIds: [1, 2], trip: null }, {
+const roomData = {
   people: [{ id: 1, name: 'Rahul' }, { id: 2, name: 'Priya' }, { id: 3, name: 'Arjun' }],
   txns: [
     T(10, 30000, '2026-11-02T10:00:00', 'Rent share'), // all three of us equally
@@ -183,21 +183,47 @@ const room = buildShare({ title: 'Room', personIds: [1, 2], trip: null }, {
     T(13, 6000, '2026-10-20T10:00:00', 'Milk'), // last month, Priya hasn't paid
   ],
   splits: [S(1, 10, 1, 10000), S(2, 10, 2, 10000, true), S(3, 11, 1, 16666), S(4, 11, 2, 6666), S(5, 12, 1, 10000), S(6, 13, 2, 3000), S(7, 13, 1, 3000, true)],
-}, { name: 'Me', vpa: 'me@ok' }, '2026-11-20T09:00:00');
+};
+const room = buildShare({ title: 'Room', personIds: [1, 2], trip: null }, roomData, { name: 'Me', vpa: 'me@ok' }, '2026-11-20T09:00:00');
+// the same payments as a trip: trip links keep the per-payment history, room links get the month sheet instead
+const goa = buildShare({ title: 'Goa', personIds: [1, 2], trip: 'Goa' },
+  { ...roomData, txns: roomData.txns.map((t: object) => ({ ...t, trip: 'Goa' }) as never) }, { name: 'Me', vpa: 'me@ok' }, '2026-11-20T09:00:00');
+assert.equal(room.people[0].history, undefined);
+assert.deepEqual(room.people[0].ledger!.map((m) => m.month), ['2026-10', '2026-11']);
 assert.deepEqual(room.shared.map((l) => [l.what, l.total, l.each, l.paidBy]), [['Rent share', 30000, 10000, [2]], ['Veggies', 20000, 6666, []]]);
 assert.deepEqual(room.people[0].own.map((l) => [l.what, l.amount]), [['Paneer · Veggies', 10000], ['Movie', 10000]]);
 assert.deepEqual(room.people[1].carried, [{ month: '2026-10', amount: 3000 }]); // unpaid October moves into November
 assert.equal(room.people[1].due, 6666 + 3000);
 assert.equal(room.people[0].due, 10000 + 16666 + 10000);
 // each person's full history: newest first, every month, who else was in it, items with who had them
-assert.deepEqual(room.people[0].history!.map((h) => [h.date, h.what, h.share, h.paid, h.with]), [
+assert.deepEqual(goa.people[0].history!.map((h) => [h.date, h.what, h.share, h.paid, h.with]), [
   ['2026-11-06', 'Movie', 10000, false, ['Me']],
   ['2026-11-05', 'Veggies', 16666, false, ['Me', 'Priya']],
   ['2026-11-02', 'Rent share', 10000, false, ['Me', 'Priya']],
   ['2026-10-20', 'Milk', 3000, true, ['Me', 'Priya']],
 ]);
-assert.deepEqual(room.people[0].history![1].items, [{ name: 'Paneer', amount: 10000, who: ['Rahul'] }, { name: 'Tomatoes', amount: 9000, who: ['Everyone'] }]);
-assert.equal(room.people[1].history!.length, 3); // Priya: rent, veggies, milk
+assert.deepEqual(goa.people[0].history![1].items, [{ name: 'Paneer', amount: 10000, who: ['Rahul'] }, { name: 'Tomatoes', amount: 9000, who: ['Everyone'] }]);
+assert.equal(goa.people[1].history!.length, 3); // Priya: rent, veggies, milk
+// the month sheet: September's curd; October's items, ₹30 paid back (₹10 of it still waiting as part credit),
+// paneer marked paid with no money recorded; November carries October's balance in. The last balance is what they owe.
+const R = (id: number, amount: number, at: string) => T(id, amount, at, 'UPI', { direction: 'credit', repay_of: 4 });
+const P = (id: number, txn: number, amount: number, paid_at: string | null) => ({ ...(S(id, txn, 4, amount) as object), paid_at }) as never;
+const sheet = ledger({ id: 4, name: 'Ravi', credit: 1000 }, {
+  people: [], txns: [T(20, 4000, '2026-09-05T10:00:00', 'Curd'), T(21, 6000, '2026-10-03T10:00:00', 'Paneer'), T(22, 2000, '2026-10-15T10:00:00', 'Milk'),
+    T(23, 9000, '2026-11-02T10:00:00', 'Rent'), R(24, 3000, '2026-10-10T10:00:00')],
+  splits: [P(20, 20, 2000, '2026-10-10T10:00:00'), P(21, 21, 3000, '2026-10-25T10:00:00'), P(22, 22, 1000, null), P(23, 23, 4500, null)],
+}, '2026-11-20T09:00:00');
+assert.deepEqual(sheet.map((m) => [m.month, m.total, m.old, m.paid.map((x) => [x.what, x.amount]), m.balance]), [
+  ['2026-09', 2000, 0, [], 2000],
+  ['2026-10', 4000, 2000, [['UPI', 3000], ['Marked paid', 3000]], 0],
+  ['2026-11', 4500, 0, [], 4500],
+]);
+// a repayment that cleared an old balance: the sheet starts with that balance, so the sums still add up
+const cleared = ledger({ id: 4, name: 'Ravi', opening: 0 }, { people: [], txns: [R(30, 5000, '2026-10-02T10:00:00')], splits: [] }, '2026-10-20T09:00:00');
+assert.deepEqual(cleared.map((m) => [m.old, m.paid.length, m.balance]), [[5000, 1, 0]]);
+// "mark all as paid" cleared things no money covers: the leftover shows as Settled this month
+const wiped = ledger({ id: 4, name: 'Ravi' }, { people: [], txns: [T(40, 2000, '2026-11-02T10:00:00', 'Tea')], splits: [P(40, 40, 1000, null)] }, '2026-11-20T09:00:00');
+assert.equal(wiped[0].balance, 1000);
 // a previous balance adds to what's due, a part payment comes off it
 const withOld = buildShare({ title: 'Room', personIds: [2], trip: null }, {
   people: [{ id: 2, name: 'Priya', opening: 50000, credit: 2000 }], txns: [T(13, 6000, '2026-10-20T10:00:00', 'Milk')], splits: [S(6, 13, 2, 3000)],

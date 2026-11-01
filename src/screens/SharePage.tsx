@@ -1,9 +1,9 @@
 'use client';
 import { Check, ChevronDown, QrCode } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { renderSVG } from 'uqr';
 import Avatar from '@/components/Avatar';
-import type { HistoryLine, ShareView } from '@/lib/share';
+import type { HistoryLine, LedgerMonth, ShareView } from '@/lib/share';
 import { supabase } from '@/lib/sync';
 import { rupees, simplePayUri } from '@/lib/upi';
 
@@ -67,6 +67,61 @@ function History({ lines }: { lines: HistoryLine[] }) {
   );
 }
 
+// A room link: one person's months side by side, like columns in a spreadsheet, scrolled to this month.
+// Each month: its items with their share, the total, the balance carried in, what they paid, and what's carried on.
+function Months({ months }: { months: LedgerMonth[] }) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => { if (ref.current) ref.current.scrollLeft = ref.current.scrollWidth; }, [months]);
+  const short = (ym: string) => monthName(ym).split(' ')[0];
+  const noDate = (what: string) => what === 'Marked paid' || what === 'Settled';
+  return (
+    <div className="months" ref={ref} tabIndex={0} aria-label="Month by month">
+      {months.map((m, i) => {
+        const last = i === months.length - 1;
+        return (
+          <section key={m.month} className="card mo" aria-label={monthName(m.month)}>
+            <h3>{monthName(m.month)}</h3>
+            <table>
+              <tbody>
+                {m.items.map((it, j) => (
+                  <tr key={j}><td className="n">{j + 1}</td><td className="d">{day(it.date)}</td><td className="w">{it.what}</td><td className="num a">{rupees(it.amount)}</td></tr>
+                ))}
+                {!m.items.length && <tr><td colSpan={4} className="sub none">Nothing new this month</td></tr>}
+              </tbody>
+              <tfoot>
+                <tr className="tot"><td colSpan={3}>Total</td><td className="num a">{rupees(m.total)}</td></tr>
+                {m.old !== 0 && <tr><td colSpan={3}>{i ? `From ${short(months[i - 1].month)}` : 'Earlier balance'}</td><td className="num a">{rupees(m.old)}</td></tr>}
+                {m.paid.map((x, j) => (
+                  <tr key={j} className="minus"><td colSpan={3}>{noDate(x.what) ? x.what : `${day(x.date)} · ${x.what}`}</td><td className="num a">−{rupees(x.amount)}</td></tr>
+                ))}
+                <tr className="bal"><td colSpan={3}>{last ? 'Due now' : `Carried to ${short(months[i + 1].month)}`}</td>
+                  <td className="num a">{m.balance < 0 ? `−${rupees(-m.balance)}` : rupees(m.balance)}</td></tr>
+              </tfoot>
+            </table>
+          </section>
+        );
+      })}
+      <style jsx>{`
+        .months { display: flex; gap: 10px; overflow-x: auto; scroll-snap-type: x mandatory; margin: 0 -16px; padding: 2px 16px 8px; scrollbar-width: thin; }
+        .mo { flex: 0 0 min(86%, 340px); scroll-snap-align: end; padding: 16px; }
+        h3 { font-size: 17px; font-weight: 600; margin-bottom: 8px; }
+        table { width: 100%; border-collapse: collapse; font-size: 15px; }
+        td { padding: 6px 0; vertical-align: top; }
+        tbody tr + tr td { border-top: .5px solid var(--line); }
+        .n { width: 22px; color: var(--faint); font-size: 13px; padding-top: 8px; }
+        .d { width: 58px; color: var(--sub); font-size: 13px; padding-top: 8px; white-space: nowrap; }
+        .w { padding-right: 10px; overflow-wrap: anywhere; }
+        .a { text-align: right; white-space: nowrap; }
+        .none { padding: 8px 0; }
+        tfoot td { color: var(--sub); }
+        tfoot .a { color: var(--ink); }
+        .tot td { border-top: 1px solid var(--line); padding-top: 10px; font-weight: 600; color: var(--ink); }
+        .bal td { border-top: 1px solid var(--line); padding-top: 10px; font-weight: 700; color: var(--ink); font-size: 16px; }
+      `}</style>
+    </div>
+  );
+}
+
 // The page a split link opens: what everyone shares equally, what's on each person, what's carried over, how to pay,
 // and each person's full history.
 export default function SharePage({ id }: { id: string }) {
@@ -74,6 +129,7 @@ export default function SharePage({ id }: { id: string }) {
   const [failed, setFailed] = useState('');
   const [qrFor, setQrFor] = useState<number | null>(null);
   const [histFor, setHistFor] = useState<number | null>(null);
+  const [pick, setPick] = useState<number | null>(null);
 
   useEffect(() => {
     async function load() {
@@ -92,6 +148,9 @@ export default function SharePage({ id }: { id: string }) {
 
   const period = view ? (view.trip ? view.trip : view.month ? monthName(view.month) : '') : '';
   useEffect(() => { document.title = view ? `${view.title} · ${period}` : 'Split'; }, [view, period]);
+  // a room link shows one person at a time, picked from chips
+  const room = !!view?.people.some((p) => p.ledger);
+  const sel = view && room ? view.people.find((p) => p.id === pick) ?? view.people[0] : undefined;
   const nameOf = (pid: number) => view?.people.find((p) => p.id === pid)?.name.split(' ')[0] ?? '';
   const payUri = (amount: number) => simplePayUri(view!.from.vpa, view!.from.name, amount / 100, `${view!.title} ${view!.month ? monthName(view!.month) : ''}`.trim());
 
@@ -109,14 +168,24 @@ export default function SharePage({ id }: { id: string }) {
                 <p className="sub">Shared with {view.people.map((p) => p.name).join(', ')}</p>
               </header>
 
+              {room && view.people.length > 1 && (
+                <div className="chips" role="tablist" aria-label="Whose sheet">
+                  {view.people.map((p) => (
+                    <button key={p.id} role="tab" aria-selected={sel?.id === p.id} className={`chip${sel?.id === p.id ? ' on' : ''}`} onClick={() => { setPick(p.id); setQrFor(null); }}>
+                      {p.name.split(' ')[0]}<span className="num">{p.due ? rupees(p.due) : 'Settled'}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
               <section className="people">
-                {view.people.map((p) => (
+                {(sel ? [sel] : view.people).map((p) => (
                   <article key={p.id} className="card person">
                     <div className="row">
                       <Avatar name={p.name} size={40} />
                       <div className="grow" style={{ minWidth: 0 }}>
                         <p className="ellipsis" style={{ fontWeight: 600 }}>{p.name}</p>
-                        <p className="sub" style={{ fontSize: 14 }}>
+                        {/* room links: the month sheet below says all this, line by line */}
+                        {!p.ledger && <p className="sub" style={{ fontSize: 14 }}>
                           {[
                             p.paid ? `${rupees(p.paid)} paid` : '',
                             ...p.carried.map((c) => `${rupees(c.amount)} from ${monthName(c.month).split(' ')[0]}`),
@@ -124,7 +193,7 @@ export default function SharePage({ id }: { id: string }) {
                             p.partPaid ? `${rupees(p.partPaid)} paid in part` : '',
                             p.oweBack ? `${rupees(p.oweBack)} owed back to them` : '',
                           ].filter(Boolean).join(' · ')}
-                        </p>
+                        </p>}
                       </div>
                       {p.due ? <p className="num due">{rupees(p.due)}</p> : <p className="settled"><Check size={16} /> Settled</p>}
                     </div>
@@ -155,7 +224,14 @@ export default function SharePage({ id }: { id: string }) {
                 ))}
               </section>
 
-              {view.shared.length > 0 && (
+              {sel?.ledger && (
+                <>
+                  <h2 className="eyebrow">Month by month</h2>
+                  <Months months={sel.ledger} />
+                </>
+              )}
+
+              {!room && view.shared.length > 0 && (
                 <>
                   <h2 className="eyebrow">Everyone equally</h2>
                   <div className="list flush">
@@ -172,7 +248,7 @@ export default function SharePage({ id }: { id: string }) {
                 </>
               )}
 
-              {view.people.filter((p) => p.own.length).map((p) => (
+              {!room && view.people.filter((p) => p.own.length).map((p) => (
                 <div key={p.id}>
                   <h2 className="eyebrow">Just {p.name.split(' ')[0]}</h2>
                   <div className="list flush">
@@ -187,8 +263,8 @@ export default function SharePage({ id }: { id: string }) {
                 </div>
               ))}
 
-              {!view.shared.length && !view.people.some((p) => p.own.length) && <p className="sub center" style={{ marginTop: 32 }}>Nothing split {view.month ? 'this month' : 'yet'}.</p>}
-              {view.people.some((p) => p.carried.length) && <p className="hint" style={{ marginTop: 20 }}>Anything unpaid from an earlier month is carried into this one until it&apos;s paid.</p>}
+              {!room && !view.shared.length && !view.people.some((p) => p.own.length) && <p className="sub center" style={{ marginTop: 32 }}>Nothing split {view.month ? 'this month' : 'yet'}.</p>}
+              {!room && view.people.some((p) => p.carried.length) && <p className="hint" style={{ marginTop: 20 }}>Anything unpaid from an earlier month is carried into this one until it&apos;s paid.</p>}
               <p className="hint center" style={{ margin: '32px 0' }}>Made with MyUPI</p>
             </>
           )}
@@ -212,6 +288,11 @@ export default function SharePage({ id }: { id: string }) {
         .hist-btn { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 44px; margin-top: 12px; padding-top: 10px;
           border-top: .5px solid var(--line); color: var(--sub); font-size: 15px; text-align: left; }
         .hist-btn :global(.up) { transform: rotate(180deg); }
+        .chips { display: flex; gap: 8px; overflow-x: auto; margin: 0 -16px 12px; padding: 2px 16px; scrollbar-width: none; }
+        .chip { flex-shrink: 0; display: grid; gap: 1px; text-align: left; padding: 8px 14px; border-radius: 16px; background: var(--card); font-weight: 600; min-height: 48px; }
+        .chip .num { font-size: 13px; font-weight: 500; color: var(--sub); }
+        .chip.on { background: var(--lime); color: var(--on-lime); }
+        .chip.on .num { color: var(--on-lime); opacity: .75; }
       `}</style>
     </div>
   );

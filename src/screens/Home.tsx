@@ -1,5 +1,5 @@
 'use client';
-import { ArrowUp, ChevronRight, Clock, FileText, FileUp, Luggage, PiggyBank, Plus, ReceiptText, Repeat, Send, Smartphone, Sparkles } from 'lucide-react';
+import { ArrowUp, ChevronRight, Clock, FileText, FileUp, HandCoins, LayoutGrid, Luggage, PiggyBank, Plus, ReceiptText, Repeat, Send, Smartphone, Sparkles } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import Avatar from '@/components/Avatar';
 import NavBar from '@/components/NavBar';
@@ -11,6 +11,7 @@ import { readNote } from '@/lib/ocr';
 import { peek, whoFor } from '@/lib/receipt';
 import { canOpenApps, haptic, longDate, preferredApp, shortDate, spentOf, toast, ym, ymd } from '@/lib/ui';
 import { rupees } from '@/lib/upi';
+import MoreMenu from './MoreMenu';
 
 // Type or paste a note in any shape ("tomatoes 70 onions 60 palak 20, palak for me rest for all");
 // Gemini reads it and the payment form opens filled in, so it's confirmed before saving.
@@ -136,6 +137,11 @@ export default function Home({ goTab }: { goTab: (t: Tab) => void }) {
   const app = preferredApp();
   const nextSub = listSubs()[0];
   const trips = listTrips();
+  const [menu, setMenu] = useState(false);
+  const debts = db.debts.filter((d) => !d.paid_at);
+  const owe = debts.reduce((a, d) => a + d.amount, 0);
+  const worth = db.investments.reduce((a, i) => a + i.value, 0);
+  const gain = worth - db.investments.reduce((a, i) => a + i.invested, 0);
 
   return (
     <div className="page">
@@ -191,15 +197,26 @@ export default function Home({ goTab }: { goTab: (t: Tab) => void }) {
             </div>
           )}
 
+          {/* what you owe and what you've put away, always in view */}
+          <div className="money">
+            <button className="card mcard" onClick={() => { haptic(); setNav({ debts: true }); }}>
+              <span className="mini-icon"><HandCoins size={17} /></span>
+              <span className="hero-label">You owe</span>
+              <span className="num big">{rupees(owe)}</span>
+              <span className="sub small">{debts.length ? `${debts.length} debt${debts.length > 1 ? 's' : ''} to pay` : 'Nothing to pay back'}</span>
+            </button>
+            <button className="card mcard" onClick={() => { haptic(); setNav({ investing: true }); }}>
+              <span className="mini-icon lime"><PiggyBank size={17} /></span>
+              <span className="hero-label">Saved and invested</span>
+              <span className="num big">{rupees(worth)}</span>
+              <span className="sub small">{db.investments.length ? (gain ? `${gain > 0 ? '+' : '−'}${rupees(Math.abs(gain))} ${gain > 0 ? 'gain' : 'loss'}` : 'No change yet') : 'Add your first'}</span>
+            </button>
+          </div>
+
           <div className="list" style={{ marginTop: 14 }}>
             <button className="item" onClick={() => { setNav({ peopleView: 'trips' }); goTab('people'); }}>
               <span className="mini-icon"><Luggage size={17} /></span>
               <span className="grow"><b className="t">Trips and events</b><br /><span className="sub">{trips.length ? `${trips.slice(0, 2).join(', ')}${trips.length > 2 ? ` +${trips.length - 2}` : ''}` : 'Goa trip, a party: split it all in one place'}</span></span>
-              <ChevronRight size={18} strokeWidth={2.5} className="chev" />
-            </button>
-            <button className="item" onClick={() => setNav({ investing: true })}>
-              <span className="mini-icon"><PiggyBank size={17} /></span>
-              <span className="grow"><b className="t">Investments and savings</b><br /><span className="sub">{db.investments.length ? `Worth ${rupees(db.investments.reduce((a, i) => a + i.value, 0))}` : 'Funds, FDs, stocks, savings goals'}</span></span>
               <ChevronRight size={18} strokeWidth={2.5} className="chev" />
             </button>
             <button className="item" onClick={() => setNav({ subs: true })}>
@@ -207,7 +224,13 @@ export default function Home({ goTab }: { goTab: (t: Tab) => void }) {
               <span className="grow"><b className="t">Autopays</b><br /><span className="sub">{nextSub ? `Next: ${nextSub.name} on ${shortDate(`${nextSub.next}T00:00:00`)}` : 'Subscriptions, EMIs, mandates'}</span></span>
               <ChevronRight size={18} strokeWidth={2.5} className="chev" />
             </button>
+            <button className="item" onClick={() => { haptic(); setMenu(true); }}>
+              <span className="mini-icon"><LayoutGrid size={17} /></span>
+              <span className="grow"><b className="t">More</b><br /><span className="sub">Groups, split links, categories, statements, settings</span></span>
+              <ChevronRight size={18} strokeWidth={2.5} className="chev" />
+            </button>
           </div>
+          {menu && <MoreMenu goTab={goTab} onClose={() => setMenu(false)} />}
         </div>
 
         <section>
@@ -233,6 +256,11 @@ export default function Home({ goTab }: { goTab: (t: Tab) => void }) {
         .hero { position: relative; overflow: hidden; border-radius: 30px; padding: 22px 22px 6px; background: var(--card);
           box-shadow: inset 0 0 0 .5px rgb(255 255 255 / .06); }
         .hero-label { font-size: 15px; color: var(--sub); letter-spacing: -0.24px; }
+        .money { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 14px; }
+        .mcard { display: grid; gap: 2px; justify-items: start; text-align: left; padding: 14px 16px; min-width: 0; }
+        .mcard .mini-icon { margin-bottom: 8px; }
+        .mcard .big { font-size: 22px; font-weight: 600; }
+        .mcard .small { font-size: 13px; }
         .hero-amt { font-size: 54px; line-height: 1.05; color: var(--lime); margin: 4px 0 2px; letter-spacing: -0.04em; font-weight: 700; }
         .hero-split { display: grid; grid-template-columns: 1fr 1fr; margin: 18px -12px 0; border-top: .5px solid var(--line); }
         .hero-split button { display: grid; gap: 2px; text-align: left; padding: 14px 12px; border-radius: 16px; transition: background .3s; }
