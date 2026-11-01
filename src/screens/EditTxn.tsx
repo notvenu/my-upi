@@ -4,13 +4,14 @@ import { useState } from 'react';
 import BillField from '@/components/BillField';
 import CategoryPicker from '@/components/CategoryPicker';
 import CatIcon from '@/components/CatIcon';
+import Combobox from '@/components/Combobox';
 import ItemsEditor from '@/components/ItemsEditor';
 import Segmented from '@/components/Segmented';
 import Sheet from '@/components/Sheet';
 import SplitEditor from '@/components/SplitEditor';
 import TripField from '@/components/TripField';
 import { ME } from '@/lib/calc';
-import { addSplits, db, deleteTxn, methodOf, txnSplits, updateTxn, type Method, type Txn } from '@/lib/db';
+import { addSplits, db, deleteTxn, linkReceived, listPeople, methodOf, txnSplits, updateTxn, type Method, type Txn } from '@/lib/db';
 import { setNav } from '@/lib/nav';
 import { useSplit } from '@/lib/split';
 import { ask, removeBill, shortDate, time12, toast } from '@/lib/ui';
@@ -18,6 +19,8 @@ import { rupees } from '@/lib/upi';
 
 const STATUSES = [['SUCCESS', 'Paid'], ['PENDING', 'Unconfirmed'], ['FAILURE', "Didn't pay"]] as const;
 const METHODS: [Method, string][] = [['upi', 'UPI'], ['cash', 'Cash'], ['card', 'Card'], ['bank', 'Bank']];
+const LINKS = [['repay', 'Paid me back'], ['owe', 'I owe it back']] as const;
+const NONE = -1; // "Counts toward": not with anyone
 
 // Edit an entry; right after "did you pay?" it's the details step (what for, category, split).
 export default function EditTxn({ t: initial, onClose }: { t: Txn; onClose: () => void }) {
@@ -30,6 +33,9 @@ export default function EditTxn({ t: initial, onClose }: { t: Txn; onClose: () =
   const [status, setStatus] = useState(t.status);
   const [bill, setBill] = useState(t.bill_uri);
   const [method, setMethod] = useState<Method>(methodOf(t) ?? 'upi');
+  // received: counted with a person, as them paying you back (credit) or their money you owe back (debit)
+  const [linkTo, setLinkTo] = useState(t.repay_of ?? t.owe_to ?? NONE);
+  const [linkKind, setLinkKind] = useState<'repay' | 'owe'>(t.owe_to ? 'owe' : 'repay');
   const existing = txnSplits(t.id);
   const unasked = existing.filter((x) => x.person_id && !x.paid_at && !x.requested_at).length;
   const split = useSplit(t.amount, t.items ?? undefined);
@@ -51,6 +57,8 @@ export default function EditTxn({ t: initial, onClose }: { t: Txn; onClose: () =
       ...(itemsLocked ? {} : { items: split.itemsData() }),
     });
     if (rows.length) addSplits(t.id, rows);
+    const wasTo = t.repay_of ?? t.owe_to ?? NONE, wasKind = t.owe_to ? 'owe' : 'repay';
+    if (t.direction === 'credit' && (linkTo !== wasTo || (linkTo !== NONE && linkKind !== wasKind))) linkReceived(t.id, linkTo === NONE ? null : linkTo, linkKind);
     toast(rows.length ? `Saved · ${rows.length} split${rows.length > 1 ? 's' : ''} added` : 'Saved');
     onClose();
     if (rows.length && status !== 'FAILURE') setNav({ requestFor: t.id }); // offer to ask for the new shares right away
@@ -81,6 +89,23 @@ export default function EditTxn({ t: initial, onClose }: { t: Txn; onClose: () =
 
       <h3 className="eyebrow">Category</h3>
       <CategoryPicker category={category} subcategory={subcategory} onChange={(c, s) => { setCategory(c); setSubcategory(s); }} />
+
+      {t.direction === 'credit' && (
+        <>
+          <h3 className="eyebrow">Counts toward</h3>
+          <Combobox label="From a person" placeholder="Not with anyone" value={linkTo}
+            options={[{ value: NONE, label: 'Not with anyone' }, ...listPeople().map((p) => ({ value: p.id, label: p.name, hint: p.owed > 0 ? `owes ${rupees(p.owed)}` : p.owed < 0 ? `you owe ${rupees(-p.owed)}` : undefined }))]}
+            onChange={setLinkTo} />
+          {linkTo !== NONE && (
+            <>
+              <div style={{ marginTop: 10 }}><Segmented options={LINKS} value={linkKind} onChange={setLinkKind} label="What it was" /></div>
+              <p className="hint">{linkKind === 'repay'
+                ? 'Credit: comes off what they owe you, clearing their oldest splits first. A part payment is fine.'
+                : 'Debit: their money you owe back. It nets against what they owe; past that, you owe them.'}</p>
+            </>
+          )}
+        </>
+      )}
 
       {t.direction === 'debit' && (
         <>

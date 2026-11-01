@@ -1,7 +1,8 @@
 'use client';
 import { useState } from 'react';
 import { addGroup, deletePerson, listGroups, savePerson, type Person } from '@/lib/db';
-import { ask, phoneError, toast, vpaError } from '@/lib/ui';
+import { ask, phoneError, toast, toPaise, vpaError } from '@/lib/ui';
+import { cleanAmount } from '@/lib/upi';
 import Avatar from './Avatar';
 import Combobox from './Combobox';
 import Sheet from './Sheet';
@@ -12,6 +13,7 @@ export default function PersonForm({ person: p, onClose }: { person: Partial<Per
   const [phone, setPhone] = useState(p.phone ?? '');
   const [vpa, setVpa] = useState(p.vpa ?? '');
   const [groupIds, setGroupIds] = useState<number[]>(p.groupIds ?? []);
+  const [opening, setOpening] = useState(p.opening ? String(p.opening / 100) : '');
   const [tried, setTried] = useState(false);
   const groups = listGroups();
   const errors = { name: !name.trim() ? 'Enter a name' : undefined, phone: phoneError(phone), vpa: vpaError(vpa) };
@@ -19,7 +21,7 @@ export default function PersonForm({ person: p, onClose }: { person: Partial<Per
   function save() {
     setTried(true);
     if (errors.name || errors.phone || errors.vpa) return;
-    const id = savePerson({ id: p.id, name, phone, vpa }, groupIds);
+    const id = savePerson({ id: p.id, name, phone, vpa, opening: toPaise(opening) }, groupIds);
     toast(p.id ? `${name.trim()} updated` : `${name.trim()} added`);
     onClose(id);
   }
@@ -55,6 +57,15 @@ export default function PersonForm({ person: p, onClose }: { person: Partial<Per
         </div>
       </div>
       <p className="hint">Phone is for WhatsApp requests, UPI ID for paying them.</p>
+
+      <h3 className="eyebrow">Previous balance</h3>
+      <div className="list">
+        <div className="field"><label htmlFor="pf-opening">They owe you</label>
+          <span className="sub">₹</span>
+          <input id="pf-opening" className="num" value={opening} onChange={(e) => setOpening(cleanAmount(e.target.value))} inputMode="decimal" placeholder="0"
+            style={{ textAlign: 'right' }} /></div>
+      </div>
+      <p className="hint">Anything left from before you used MyUPI. Payments you record from them clear this first.</p>
 
       <h3 className="eyebrow">Groups</h3>
       <Combobox multiple label="Groups" placeholder="Roommates, Office…" options={groups.map((g) => ({ value: g.id, label: g.name }))}

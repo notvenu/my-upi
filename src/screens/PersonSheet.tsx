@@ -1,19 +1,22 @@
 'use client';
-import { ArrowDownLeft, CircleCheck, MessageCircle, MessageSquare, Pencil, QrCode, Send, Share2, Users } from 'lucide-react';
+import { ArrowDownLeft, CircleCheck, IndianRupee, MessageCircle, MessageSquare, Pencil, QrCode, Send, Share2, Users } from 'lucide-react';
 import { useState } from 'react';
 import { renderSVG } from 'uqr';
 import Avatar from '@/components/Avatar';
 import Combobox from '@/components/Combobox';
+import Segmented from '@/components/Segmented';
 import Sheet from '@/components/Sheet';
-import { getSetting, markSplits, setSetting, unpaidSplits, type Group, type Person } from '@/lib/db';
+import { allocate } from '@/lib/calc';
+import { getSetting, markSplits, recordRepayment, setSetting, settleAll, unpaidSplits, type Group, type Method, type Person } from '@/lib/db';
 import { openPay } from '@/lib/nav';
 import { inScope, scopesFor } from '@/lib/scope';
-import { ask, ddmon, haptic, shareText, toast, VPA_RE, vpaError } from '@/lib/ui';
-import { personQr, requestMessage, requestReason, rupees, simplePayUri } from '@/lib/upi';
+import { ask, ddmon, haptic, shareText, toast, toPaise, VPA_RE, vpaError, ymd } from '@/lib/ui';
+import { cleanAmount, personQr, requestMessage, requestReason, rupees, simplePayUri } from '@/lib/upi';
 
 // One sheet with an inner navigation stack: person → request → QR; steps push in from the right and pop back to the left.
 // scope / txnId / start: open straight on a request for one payment (right after paying), a month, or a trip.
-const ORDER = ['person', 'request', 'qr'] as const;
+const ORDER = ['person', 'repay', 'request', 'qr'] as const;
+const METHODS: [Method, string][] = [['upi', 'UPI'], ['cash', 'Cash'], ['card', 'Card'], ['bank', 'Bank']];
 type Mode = (typeof ORDER)[number];
 
 export default function PersonSheet({ p, groups = [], onClose, onEdit, scope: initialScope = 'all', txnId, start = 'person' }: {
@@ -29,17 +32,33 @@ export default function PersonSheet({ p, groups = [], onClose, onEdit, scope: in
   const scopes = scopesFor(all, new Date(), txnId);
   const current = scopes.find((s) => s.key === scope) ?? scopes[0];
   const items = all.filter((x) => inScope(current.key, x));
-  const total = items.reduce((a, x) => a + x.amount, 0);
+  // asking for everything also carries their previous balance and takes off what they've paid in part
+  const isAll = current.key === 'all';
+  const opening = p.opening ?? 0, credit = p.credit ?? 0, owe = p.owe ?? 0;
+  // what you owe them back nets against what they owe, like a payment already made
+  const adjust = isAll ? { opening, paid: credit + owe } : { opening: 0, paid: 0 };
+  const total = Math.max(0, items.reduce((a, x) => a + x.amount, 0) + adjust.opening - adjust.paid);
+  const [repay, setRepay] = useState({ amount: '', date: ymd(new Date()), method: 'upi' as Method, note: '' });
+  const repaid = toPaise(repay.amount);
+  const effect = allocate(repaid, opening, credit, all.map((x) => ({ id: x.id, amount: x.amount })));
   const lastAsked = items.map((x) => x.requested_at).filter(Boolean).sort().pop();
   const fresh = items.filter((x) => !x.requested_at).length;
   const first = p.name.split(' ')[0];
   const myVpa = getSetting('my_vpa');
   const reason = current.key.startsWith('t:') ? current.label.slice(0, 50) : requestReason(items.map((x) => x.note || x.payee_name || ''));
-  const msg = requestMessage(p.name, items, myVpa, current.phrase, reason);
-  const step = mode !== 'person' && !VPA_RE.test(myVpa) ? 'vpa' : mode;
+  const msg = requestMessage(p.name, items, myVpa, current.phrase, reason, adjust);
+  const step = (mode === 'request' || mode === 'qr') && !VPA_RE.test(myVpa) ? 'vpa' : mode;
   // opened straight on a request: closing it closes the sheet instead of showing the person first
-  const back = mode === 'qr' ? () => go('request') : mode === 'request' && start === 'person' ? () => go('person') : undefined;
-  const TITLES = { person: undefined, vpa: 'Where should they pay?', request: `Request ${rupees(total)}`, qr: 'Scan to pay' };
+  const back = mode === 'qr' ? () => go('request') : (mode === 'request' && start === 'person') || mode === 'repay' ? () => go('person') : undefined;
+  const TITLES = { person: undefined, vpa: 'Where should they pay?', request: `Request ${rupees(total)}`, qr: 'Scan to pay', repay: `Payment from ${first}` };
+
+  function saveRepay() {
+    recordRepayment(p.id, repaid, repay);
+    toast(effect.opening + all.filter((x) => !effect.paid.includes(x.id)).reduce((a, x) => a + x.amount, 0) - effect.credit <= 0
+      ? `${first} is settled up` : `${rupees(repaid)} from ${first} recorded`);
+    setRepay({ amount: '', date: ymd(new Date()), method: 'upi', note: '' });
+    go('person');
+  }
 
   function sent(how: string) {
     markSplits(items.map((x) => x.id), 'requested_at');
@@ -55,7 +74,7 @@ export default function PersonSheet({ p, groups = [], onClose, onEdit, scope: in
   async function settle() {
     const what = current.about && items.length < all.length ? `Their items from ${current.about}` : 'All their pending items';
     if (!(await ask(`Did ${first} pay you ${rupees(total)}?`, `${what} will be marked settled.`, 'Yes, settled'))) return;
-    markSplits(items.map((x) => x.id), 'paid_at');
+    if (isAll) settleAll(p.id); else markSplits(items.map((x) => x.id), 'paid_at');
     toast(current.key === 'all' || items.length === all.length ? `${first} is settled up` : `${current.label} settled with ${first}`);
     setScope('all');
   }
@@ -63,7 +82,7 @@ export default function PersonSheet({ p, groups = [], onClose, onEdit, scope: in
   // what to ask for: everything, one payment, a week, a month, or a trip
   const scopePicker = scopes.length > 1 && (
     <div style={{ margin: step === 'person' ? '14px 0 4px' : '0 0 4px' }}>
-      <Combobox label="Request for" options={scopes.map((sc) => ({ value: sc.key, label: sc.label, hint: rupees(sc.total) }))} value={scope} onChange={setScope} />
+      <Combobox label="Request for" options={scopes.map((sc) => ({ value: sc.key, label: sc.label, hint: rupees(sc.key === 'all' ? Math.max(0, p.owed) : sc.total) }))} value={scope} onChange={setScope} />
     </div>
   );
 
@@ -85,7 +104,7 @@ export default function PersonSheet({ p, groups = [], onClose, onEdit, scope: in
 
             <div className="acts">
               <button disabled={!p.vpa} onClick={() => { haptic(); onClose(); openPay(personQr(p.vpa!, p.name)); }}><Send size={22} />Pay</button>
-              <button disabled={!all.length} onClick={() => go('request')}><ArrowDownLeft size={22} />Request</button>
+              <button disabled={p.owed <= 0} onClick={() => go('request')}><ArrowDownLeft size={22} />Request</button>
               <button disabled={!onEdit} onClick={onEdit}><Pencil size={21} />Edit</button>
             </div>
             {!p.vpa && <p className="hint center">Add their UPI ID (Edit) to pay them from here.</p>}
@@ -95,9 +114,16 @@ export default function PersonSheet({ p, groups = [], onClose, onEdit, scope: in
               <span>Owes you{current.about ? ` · ${current.label}` : ''}</span>
               {total > 0 && <span style={{ textTransform: 'none', letterSpacing: 0 }}>{lastAsked ? `Asked ${ddmon(lastAsked)}${fresh ? ` · ${fresh} new` : ''}` : 'Not asked yet'}</span>}
             </h3>
-            {items.length ? (
+            {items.length || adjust.opening || adjust.paid ? (
               <>
                 <div className="list flush">
+                  {adjust.opening > 0 && (
+                    <div className="item" style={{ minHeight: 52 }}>
+                      <span className="sub" style={{ minWidth: 48 }}>Before</span>
+                      <span className="grow">Previous balance</span>
+                      <span className="num">{rupees(adjust.opening)}</span>
+                    </div>
+                  )}
                   {items.map((x) => (
                     <div key={x.id} className="item" style={{ minHeight: 52 }}>
                       <span className="sub" style={{ minWidth: 48 }}>{ddmon(x.created_at)}</span>
@@ -109,11 +135,28 @@ export default function PersonSheet({ p, groups = [], onClose, onEdit, scope: in
                       <span className="num">{rupees(x.amount)}</span>
                     </div>
                   ))}
-                  <div className="item"><b className="grow" style={{ fontWeight: 600 }}>Total</b><span className="num" style={{ fontSize: 20, color: 'var(--lime)' }}>{rupees(total)}</span></div>
+                  {isAll && credit > 0 && (
+                    <div className="item" style={{ minHeight: 52 }}>
+                      <span className="sub" style={{ minWidth: 48 }}>Paid</span>
+                      <span className="grow">Paid in part</span>
+                      <span className="num" style={{ color: 'var(--green)' }}>−{rupees(credit)}</span>
+                    </div>
+                  )}
+                  {isAll && owe > 0 && (
+                    <div className="item" style={{ minHeight: 52 }}>
+                      <span className="sub" style={{ minWidth: 48 }}>Lent</span>
+                      <span className="grow">You owe {first} back</span>
+                      <span className="num" style={{ color: 'var(--green)' }}>−{rupees(owe)}</span>
+                    </div>
+                  )}
+                  <div className="item"><b className="grow" style={{ fontWeight: 600 }}>{total || !adjust.paid ? 'Total' : `You owe ${first}`}</b>
+                    <span className="num" style={{ fontSize: 20, color: total || !adjust.paid ? 'var(--lime)' : 'var(--red)' }}>{rupees(total || Math.max(0, -p.owed))}</span></div>
                 </div>
                 <div className="stack" style={{ marginTop: 16, gap: 4 }}>
-                  <button className="btn" onClick={() => go('request')}><ArrowDownLeft size={18} /> {lastAsked && !fresh ? `Remind ${first}` : `Request ${rupees(total)}`}</button>
-                  <button className="btn ghost" onClick={settle}>{items.length === all.length ? 'Mark all as paid' : `Mark ${current.label} as paid`}</button>
+                  {total > 0 && <button className="btn" onClick={() => go('request')}><ArrowDownLeft size={18} /> {lastAsked && !fresh ? `Remind ${first}` : `Request ${rupees(total)}`}</button>}
+                  <button className="btn soft" onClick={() => { setRepay((r) => ({ ...r, amount: r.amount || (p.owed > 0 ? String(p.owed / 100) : '') })); go('repay'); }}>
+                    <IndianRupee size={18} /> Record a payment</button>
+                  {total > 0 && <button className="btn ghost" onClick={settle}>{isAll ? 'Mark all as paid' : `Mark ${current.label} as paid`}</button>}
                 </div>
               </>
             ) : (
@@ -123,6 +166,35 @@ export default function PersonSheet({ p, groups = [], onClose, onEdit, scope: in
                 <p className="sub">Splits you add with {first} show up here.</p>
               </div>
             )}
+          </>
+        ) : step === 'repay' ? (
+          <>
+            <label className="big">
+              <span className={`rs${repaid ? '' : ' dim'}`}>₹</span>
+              <input className="num" inputMode="decimal" placeholder="0" aria-label={`Amount ${first} paid`} autoFocus value={repay.amount}
+                onChange={(e) => setRepay({ ...repay, amount: cleanAmount(e.target.value) })} style={{ width: `${Math.max(1, repay.amount.length || 1) * 0.62 + 0.2}em` }} />
+            </label>
+            <p className="sub center">{p.owed > 0 ? `${first} owes you ${rupees(p.owed)} in all. Part of it is fine.` : `${first} doesn't owe you anything now; this counts toward their next split.`}</p>
+            <div style={{ marginTop: 16 }}><Segmented options={METHODS} value={repay.method} onChange={(method) => setRepay({ ...repay, method })} label="Paid by" /></div>
+            <div className="list" style={{ marginTop: 12 }}>
+              <label className="item"><span className="grow">Date</span>
+                <input type="date" value={repay.date} max={ymd(new Date())} onChange={(e) => setRepay({ ...repay, date: e.target.value || ymd(new Date()) })} aria-label="Date" className="date" /></label>
+              <label className="item"><input className="grow" style={{ padding: '8px 0' }} value={repay.note} onChange={(e) => setRepay({ ...repay, note: e.target.value })} maxLength={80} placeholder="Note (optional)" aria-label="Note" /></label>
+            </div>
+            {repaid > 0 && (
+              <>
+                <h3 className="eyebrow">This clears</h3>
+                <div className="list flush">
+                  {opening - effect.opening > 0 && <div className="item"><span className="grow">Previous balance{effect.opening ? ' (part)' : ''}</span><span className="num">{rupees(opening - effect.opening)}</span></div>}
+                  {all.filter((x) => effect.paid.includes(x.id)).map((x) => (
+                    <div key={x.id} className="item"><span className="sub" style={{ minWidth: 48 }}>{ddmon(x.created_at)}</span><span className="grow ellipsis">{x.note || x.payee_name || 'Expense'}</span><span className="num">{rupees(x.amount)}</span></div>
+                  ))}
+                  {effect.credit > 0 && <div className="item"><span className="grow">Kept as part payment<br /><span className="sub">Counts toward {all.some((x) => !effect.paid.includes(x.id)) ? 'their next split' : 'future splits'}</span></span><span className="num">{rupees(effect.credit)}</span></div>}
+                </div>
+              </>
+            )}
+            <p className="hint">It&apos;s added to History as money received from {first}, so your bank statement matches it later instead of adding it twice.</p>
+            <button className="btn" style={{ marginTop: 12 }} disabled={!repaid} onClick={saveRepay}>Record {repaid ? rupees(repaid) : 'payment'}</button>
           </>
         ) : step === 'vpa' ? (
           <>
@@ -179,6 +251,11 @@ export default function PersonSheet({ p, groups = [], onClose, onEdit, scope: in
           letter-spacing: 0; color: var(--tint); transition: transform .45s var(--spring), background .3s; }
         .acts button:active:not(:disabled) { transform: scale(.94); background: var(--pressed); transition-duration: .1s; }
         .acts button:disabled { color: var(--faint); opacity: .5; }
+        .big { display: flex; justify-content: center; align-items: flex-start; font-size: 60px; line-height: 1; cursor: text; margin-bottom: 6px; }
+        .big input { font-size: inherit; text-align: center; max-width: 100%; padding: 0; caret-color: var(--green); }
+        .rs { font-size: 30px; font-weight: 500; margin-top: 8px; margin-right: 2px; }
+        .dim { color: var(--faint); }
+        .date { color: var(--ink); color-scheme: dark; font-size: 16px; }
         .qr { width: 240px; padding: 12px; background: #fff; border-radius: 18px; color: #141413; }
         .qr :global(svg) { display: block; width: 100%; height: auto; }
         .bubble-wrap { display: grid; justify-items: end; }

@@ -1,9 +1,9 @@
 'use client';
-import { Check, QrCode } from 'lucide-react';
+import { Check, ChevronDown, QrCode } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { renderSVG } from 'uqr';
 import Avatar from '@/components/Avatar';
-import type { ShareView } from '@/lib/share';
+import type { HistoryLine, ShareView } from '@/lib/share';
 import { supabase } from '@/lib/sync';
 import { rupees, simplePayUri } from '@/lib/upi';
 
@@ -14,11 +14,66 @@ const ago = (iso: string) => {
   return m < 2 ? 'just now' : m < 60 ? `${m} min ago` : m < 1440 ? `${Math.round(m / 60)} h ago` : day(iso.slice(0, 10));
 };
 
-// The page a split link opens: what everyone shares equally, what's on each person, what's carried over, and how to pay.
+// One person's split history by month: each payment with the bill, their share, who else was in it, and the items.
+function History({ lines }: { lines: HistoryLine[] }) {
+  return (
+    <div className="hist">
+      {lines.map((h, i) => {
+        const month = h.date.slice(0, 7);
+        const sub = [day(h.date), h.payee && h.payee !== h.what ? h.payee : '', h.category, h.place, h.trip].filter(Boolean).join(' · ');
+        return (
+          <div key={i} className="w">
+            {month !== lines[i - 1]?.date.slice(0, 7) && <h3 className="eyebrow">{monthName(month)}</h3>}
+            <div className="entry">
+              <div className="top">
+                <span className="grow" style={{ minWidth: 0 }}>
+                  <span style={{ display: 'block', fontWeight: 600 }}>{h.what}</span>
+                  <span className="sub" style={{ display: 'block', fontSize: 14 }}>{sub}</span>
+                </span>
+                <span className="amt">
+                  <span className={`num${h.paid ? ' paid' : ''}`}>{rupees(h.share)}</span>
+                  <span className={`tag${h.paid ? ' done' : ''}`}>{h.paid ? <><Check size={12} /> Paid</> : 'Due'}</span>
+                </span>
+              </div>
+              <p className="sub meta">Bill {rupees(h.total)} · split with {h.with.join(', ')}</p>
+              {h.items.length > 0 && (
+                <ul className="items">
+                  {h.items.map((it, j) => (
+                    <li key={j}><span className="grow">{it.name}<span className="sub"> · {it.who.join(', ')}</span></span><span className="num">{rupees(it.amount)}</span></li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </div>
+        );
+      })}
+      <style jsx>{`
+        .hist { margin-top: 4px; }
+        .hist .eyebrow { margin: 14px 0 6px; }
+        .entry { padding: 10px 0; }
+        .w + .w .entry { border-top: .5px solid var(--line); }
+        .w + .w .eyebrow + .entry { border-top: 0; }
+        .top { display: flex; gap: 12px; align-items: flex-start; }
+        .amt { display: grid; justify-items: end; gap: 4px; }
+        .tag { display: inline-flex; align-items: center; gap: 3px; font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 999px;
+          background: var(--raised); color: var(--sub); }
+        .tag.done { background: var(--lime); color: var(--on-lime); }
+        .paid { color: var(--faint); text-decoration: line-through; }
+        .meta { font-size: 14px; margin-top: 4px; }
+        .items { list-style: none; margin: 8px 0 0; padding: 8px 12px; border-radius: 12px; background: var(--bg); display: grid; gap: 6px; font-size: 14px; }
+        .items li { display: flex; gap: 10px; }
+      `}</style>
+    </div>
+  );
+}
+
+// The page a split link opens: what everyone shares equally, what's on each person, what's carried over, how to pay,
+// and each person's full history.
 export default function SharePage({ id }: { id: string }) {
   const [view, setView] = useState<ShareView | null>(null);
   const [failed, setFailed] = useState('');
   const [qrFor, setQrFor] = useState<number | null>(null);
+  const [histFor, setHistFor] = useState<number | null>(null);
 
   useEffect(() => {
     async function load() {
@@ -61,8 +116,13 @@ export default function SharePage({ id }: { id: string }) {
                       <div className="grow" style={{ minWidth: 0 }}>
                         <p className="ellipsis" style={{ fontWeight: 600 }}>{p.name}</p>
                         <p className="sub" style={{ fontSize: 14 }}>
-                          {p.paid ? `${rupees(p.paid)} paid` : ''}{p.paid && p.carried.length ? ' · ' : ''}
-                          {p.carried.map((c) => `${rupees(c.amount)} from ${monthName(c.month).split(' ')[0]}`).join(', ')}
+                          {[
+                            p.paid ? `${rupees(p.paid)} paid` : '',
+                            ...p.carried.map((c) => `${rupees(c.amount)} from ${monthName(c.month).split(' ')[0]}`),
+                            p.opening ? `${rupees(p.opening)} previous balance` : '',
+                            p.partPaid ? `${rupees(p.partPaid)} paid in part` : '',
+                            p.oweBack ? `${rupees(p.oweBack)} owed back to them` : '',
+                          ].filter(Boolean).join(' · ')}
                         </p>
                       </div>
                       {p.due ? <p className="num due">{rupees(p.due)}</p> : <p className="settled"><Check size={16} /> Settled</p>}
@@ -79,6 +139,15 @@ export default function SharePage({ id }: { id: string }) {
                             <p className="sub">Scan with any UPI app · {view.from.vpa}</p>
                           </div>
                         )}
+                      </>
+                    )}
+                    {!!p.history?.length && (
+                      <>
+                        <button className="hist-btn" aria-expanded={histFor === p.id} onClick={() => setHistFor(histFor === p.id ? null : p.id)}>
+                          <span className="grow">History · {p.history.length} {p.history.length === 1 ? 'payment' : 'payments'}</span>
+                          <ChevronDown size={17} className={histFor === p.id ? 'up' : ''} />
+                        </button>
+                        {histFor === p.id && <History lines={p.history} />}
                       </>
                     )}
                   </article>
@@ -139,6 +208,9 @@ export default function SharePage({ id }: { id: string }) {
         .code :global(svg) { width: 200px; height: 200px; background: #fff; border-radius: 12px; padding: 6px; display: block; }
         .line { gap: 12px; }
         .paid { color: var(--faint); text-decoration: line-through; }
+        .hist-btn { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 44px; margin-top: 12px; padding-top: 10px;
+          border-top: .5px solid var(--line); color: var(--sub); font-size: 15px; text-align: left; }
+        .hist-btn :global(.up) { transform: rotate(180deg); }
       `}</style>
     </div>
   );

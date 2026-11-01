@@ -128,7 +128,8 @@ export default function Home({ goTab }: { goTab: (t: Tab) => void }) {
   const earlier = monthList.filter((t) => !t.created_at.startsWith(today)).slice(0, 12);
   const unpaid = unpaidSplits();
   const pending = toConfirm();
-  const owed = unpaid.reduce((a, x) => a + x.amount, 0);
+  // each person's balance (splits, previous balance, less part payments and what you owe them), only those who owe you
+  const owed = listPeople().reduce((a, p) => a + Math.max(0, p.owed), 0) + unpaid.filter((x) => x.person_id === null).reduce((a, x) => a + x.amount, 0);
   const dueNow = unpaid.filter((x) => !x.requested_at && x.created_at.slice(0, 7) < thisMonth);
   const owers = new Set(dueNow.map((x) => x.person_id ?? x.name)).size;
   const unconfirmed = monthList.filter((t) => ['PENDING', 'SUBMITTED', 'UNKNOWN'].includes(t.status)).length;

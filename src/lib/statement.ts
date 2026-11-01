@@ -102,6 +102,8 @@ type CsvTxn = {
   bank_ref: string | null; category: string; subcategory: string | null; note: string | null; trip?: string | null; method?: string | null;
 };
 const csvCell = (v: string) => (/[",\r\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v);
+// "05 Oct 2026": Excel can't swap day and month (it shows 2026-10-05 as 10/5 in US format), and parseDate reads it back
+const csvDate = (iso: string) => `${iso.slice(8, 10)} ${MONTHS[+iso.slice(5, 7) - 1].replace(/^./, (c) => c.toUpperCase())} ${iso.slice(0, 4)}`;
 // A downloadable statement in the same columns the importer reads, so it imports back as-is. Failed payments are left out.
 export function statementCsv(txns: CsvTxn[]): string {
   const rows = [['Date', 'Time', 'Details', 'Ref No', 'Debit', 'Credit', 'Category', 'Subcategory', 'Reason', 'Trip', 'Method']];
@@ -109,7 +111,7 @@ export function statementCsv(txns: CsvTxn[]): string {
     if (t.status === 'FAILURE') continue;
     const amt = (t.amount / 100).toFixed(2), credit = t.direction === 'credit';
     const who = t.payee_name || t.payee_vpa || 'Payment';
-    rows.push([t.created_at.slice(0, 10), t.created_at.slice(11, 16), `${credit ? 'Received from' : 'Paid to'} ${who}`, t.bank_ref ?? '',
+    rows.push([csvDate(t.created_at), t.created_at.slice(11, 16), `${credit ? 'Received from' : 'Paid to'} ${who}`, t.bank_ref ?? '',
       credit ? '' : amt, credit ? amt : '', t.category, t.subcategory ?? '', t.note ?? '', t.trip ?? '', t.method ?? '']);
   }
   return '﻿' + rows.map((r) => r.map(csvCell).join(',')).join('\r\n') + '\r\n'; // BOM: Excel reads ₹ and names right

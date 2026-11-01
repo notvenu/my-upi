@@ -90,9 +90,9 @@ export default function People() {
                   <Avatar name={p.name} />
                   <span className="grow">
                     <span className="ellipsis" style={{ display: 'block', fontWeight: 500 }}>{p.name}</span>
-                    <span className="sub ellipsis" style={{ display: 'block' }}>{p.owed > 0 ? 'Owes you' : p.vpa || (p.phone && `+91 ${p.phone}`) || 'No contact details'}</span>
+                    <span className="sub ellipsis" style={{ display: 'block' }}>{p.owed > 0 ? 'Owes you' : p.owed < 0 ? 'You owe' : p.vpa || (p.phone && `+91 ${p.phone}`) || 'No contact details'}</span>
                   </span>
-                  {p.owed > 0 && <span className="num" style={{ color: 'var(--lime)' }}>{rupees(p.owed)}</span>}
+                  {p.owed !== 0 && <span className="num" style={{ color: p.owed > 0 ? 'var(--lime)' : 'var(--red)' }}>{rupees(Math.abs(p.owed))}</span>}
                   <ChevronRight size={18} strokeWidth={2.5} className="chev" />
                 </button>
               ))}

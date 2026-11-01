@@ -1,4 +1,4 @@
-import { findRecurring, nextDue, settleFromCredits, type Every } from './calc';
+import { allocate, findRecurring, nextDue, settleFromCredits, type Every } from './calc';
 import { emit } from './store';
 import { matchRows, methodFromDesc, payeeFromDesc, type StmtRow } from './statement';
 import { SUBCATEGORIES } from './upi';
@@ -16,6 +16,8 @@ export type Txn = {
   sub_id?: number | null; // logged by an autopay
   items?: Item[] | null; // a bill split item by item
   desc?: string | null; // the bank / UPI app's own text for a statement row
+  repay_of?: number | null; // received: a person paying you back; already counted against what they owe
+  owe_to?: number | null; // received: a person's money you owe back (a loan to you)
 };
 export type Method = 'upi' | 'cash' | 'card' | 'bank';
 export type Item = { name: string; amount: number; who: number[] }; // who: person ids, 0 = you
@@ -25,7 +27,9 @@ export type Split = {
   id: number; txn_id: number; person_id: number | null; name: string; phone: string | null; amount: number;
   requested_at: string | null; paid_at: string | null;
 };
-type PersonRow = { id: number; name: string; phone: string | null; vpa: string | null };
+// opening: what they owed you from before (still unpaid). credit: paid in part, not yet enough to clear their next split.
+// owe: money they gave you that you owe back (it nets against what they owe; below zero, you owe them).
+type PersonRow = { id: number; name: string; phone: string | null; vpa: string | null; opening?: number; credit?: number; owe?: number };
 type GroupRow = { id: number; name: string; memberIds: number[]; trip?: boolean }; // trip: a trip or event, its name is the tag on its payments
 export type Person = PersonRow & { owed: number; groupIds: number[] };
 export type Group = GroupRow;
@@ -73,7 +77,9 @@ const txnById = (id: number) => db.txns.find((t) => t.id === id);
 function insertSplits(txnId: number, splits: { personId: number; amount: number }[]) {
   for (const s of splits) {
     const p = db.people.find((x) => x.id === s.personId);
-    if (p) db.splits.push({ id: nextId(), txn_id: txnId, person_id: p.id, name: p.name, phone: p.phone, amount: s.amount, requested_at: null, paid_at: null });
+    if (!p) continue;
+    db.splits.push({ id: nextId(), txn_id: txnId, person_id: p.id, name: p.name, phone: p.phone, amount: s.amount, requested_at: null, paid_at: null });
+    if (p.credit) applyCredit(p, 0); // they'd paid ahead: that covers this split if it's enough
   }
 }
 
@@ -90,6 +96,7 @@ function pushTxn(t: Partial<Txn> & { amount: number }, splits: { personId: numbe
     created_at: t.created_at ?? localIso(), status: t.status ?? 'SUCCESS', txn_ref: t.txn_ref ?? null, upi_txn_id: null, bank_ref: t.bank_ref ?? null,
     source: t.source ?? 'manual', stmt_key: t.stmt_key ?? null, bill_uri: t.bill_uri ?? null, trip: t.trip?.trim() || null,
     method: t.method ?? null, app: t.app ?? null, sub_id: t.sub_id ?? null, items: t.items?.length ? t.items : null, desc: t.desc ?? null,
+    ...(t.repay_of ? { repay_of: t.repay_of } : {}),
   });
   insertSplits(id, splits);
   return id;
@@ -153,7 +160,8 @@ export function listPeople(): Person[] {
   return db.people
     .map((p) => ({
       ...p,
-      owed: db.splits.filter((s) => s.person_id === p.id && !s.paid_at && counted(txnById(s.txn_id)!)).reduce((a, s) => a + s.amount, 0),
+      owed: (p.opening ?? 0) - (p.credit ?? 0) - (p.owe ?? 0) // below zero: you owe them
+        + db.splits.filter((s) => s.person_id === p.id && !s.paid_at && counted(txnById(s.txn_id)!)).reduce((a, s) => a + s.amount, 0),
       groupIds: db.groups.filter((g) => g.memberIds.includes(p.id)).map((g) => g.id),
     }))
     .sort((a, b) => count(b.id) - count(a.id) || a.name.toLowerCase().localeCompare(b.name.toLowerCase()));
@@ -161,8 +169,11 @@ export function listPeople(): Person[] {
 
 export const listGroups = (): Group[] => [...db.groups].sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()));
 
-export function savePerson(p: { id?: number; name: string; phone: string; vpa: string }, groupIds: number[]): number {
-  const row = { name: p.name.trim(), phone: p.phone.replace(/\D/g, '').slice(-10) || null, vpa: p.vpa.trim().toLowerCase() || null };
+export function savePerson(p: { id?: number; name: string; phone: string; vpa: string; opening?: number }, groupIds: number[]): number {
+  const row = {
+    name: p.name.trim(), phone: p.phone.replace(/\D/g, '').slice(-10) || null, vpa: p.vpa.trim().toLowerCase() || null,
+    ...(p.opening !== undefined ? { opening: p.opening } : {}),
+  };
   const existing = p.id ? db.people.find((x) => x.id === p.id) : undefined;
   const id = existing ? existing.id : nextId();
   if (existing) Object.assign(existing, row);
@@ -233,6 +244,52 @@ export function markSplits(ids: number[], field: 'requested_at' | 'paid_at') {
   save();
 }
 
+// "Mark all as paid": their splits, previous balance and part payment all settle.
+export function settleAll(personId: number) {
+  const p = db.people.find((x) => x.id === personId);
+  if (p) { p.opening = 0; p.credit = 0; p.owe = 0; }
+  markSplits(unpaidSplits(personId).map((s) => s.id), 'paid_at'); // saves
+}
+
+// Money from someone toward what they owe (any amount). It's logged in History as received, so a bank statement
+// later matches it instead of adding it twice, then clears their previous balance and oldest splits (calc.allocate).
+// ponytail: deleting that History entry doesn't un-settle anything; edit the person's balance if it was wrong
+export function recordRepayment(personId: number, amount: number, o: { date: string; method: Method; note: string }) {
+  const p = db.people.find((x) => x.id === personId);
+  if (!p || amount <= 0) return;
+  pushTxn({
+    amount, direction: 'credit', payee_name: p.name, payee_vpa: p.vpa, note: o.note.trim() || 'Paid back', category: 'Transfer', subcategory: 'Friends',
+    method: o.method, created_at: o.date === localIso().slice(0, 10) ? undefined : `${o.date}T12:00:00`, source: 'manual', repay_of: p.id,
+  });
+  applyCredit(p, amount);
+  save();
+}
+// Money received, counted with a person: they paid you back ('repay'), or it's theirs and you owe it back ('owe').
+// Changing or removing the link undoes the old one first.
+// ponytail: undoing a repayment puts the amount back as previous balance; the splits it cleared stay marked paid
+export function linkReceived(txnId: number, personId: number | null, kind: 'repay' | 'owe') {
+  const t = txnById(txnId);
+  if (!t || t.direction !== 'credit') return;
+  const was = db.people.find((x) => x.id === (t.repay_of ?? t.owe_to));
+  if (was && t.repay_of) {
+    was.credit = (was.credit ?? 0) - t.amount;
+    if (was.credit < 0) { was.opening = (was.opening ?? 0) - was.credit; was.credit = 0; }
+  } else if (was) was.owe = Math.max(0, (was.owe ?? 0) - t.amount);
+  t.repay_of = null; t.owe_to = null;
+  const p = db.people.find((x) => x.id === personId);
+  if (p && kind === 'repay') { t.repay_of = p.id; applyCredit(p, t.amount); }
+  else if (p) { t.owe_to = p.id; p.owe = (p.owe ?? 0) + t.amount; }
+  save();
+}
+// Puts money (a repayment, or credit already waiting) against what someone owes. Doesn't save.
+function applyCredit(p: PersonRow, amount: number) {
+  const r = allocate(amount, p.opening ?? 0, p.credit ?? 0, unpaidSplits(p.id).map((s) => ({ id: s.id, amount: s.amount })));
+  p.opening = r.opening;
+  p.credit = r.credit;
+  const now = localIso();
+  for (const s of db.splits) if (r.paid.includes(s.id)) s.paid_at = now;
+}
+
 export const getSetting = (k: string) => db.settings[k] ?? '';
 export function setSetting(k: string, v: string) { db.settings[k] = v; save(); }
 
@@ -291,7 +348,10 @@ export function applyImport(plan: ImportRow[]) {
     id: p.id, name: p.name, vpa: p.vpa,
     unpaid: unpaidSplits(p.id).map((s) => ({ id: s.id, amount: s.amount, month: s.created_at.slice(0, 7) })),
   }));
-  const paidIds = settleFromCredits(used.filter((r) => r.direction === 'credit'), owing);
+  // money already counted with a person (paid back, or owed back): its bank row only confirms it
+  const linked = (r: ImportRow) => r.status === 'match' && !!(txnById(r.txnId!)?.repay_of || txnById(r.txnId!)?.owe_to);
+  const fresh = used.filter((r) => r.direction === 'credit' && !linked(r));
+  const paidIds = settleFromCredits(fresh, owing);
   markSplits(paidIds, 'paid_at'); // saves
   return { matched, added, skipped: plan.length - used.length, settled: paidIds.length };
 }

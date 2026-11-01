@@ -53,6 +53,12 @@ assert.match(requestMessage('Rahul', [{ created_at: '2026-10-03T20:42:00', note:
   /pending from our Goa trip splits \(1 item\)/);
 assert.match(requestMessage('Rahul', [{ created_at: '2026-10-03T20:42:00', note: 'Cab', payee_name: null, amount: 500, txn_amount: 1000 }], 'me@ok', 'our Goa trip splits', 'Goa trip'),
   /Note for the payment: Goa trip$/);
+// previous balance and part payments: listed, and the total nets them
+const adj = requestMessage('Rahul', [{ created_at: '2026-10-03T20:42:00', note: 'Cab', payee_name: null, amount: 50000, txn_amount: 100000 }], 'me@ok', undefined, 'x', { opening: 40000, paid: 10000 });
+assert.match(adj, /Previous balance — \*₹400\*/);
+assert.match(adj, /Already paid — \*−₹100\*/);
+assert.match(adj, /\*Total: ₹800\*/);
+assert.match(requestMessage('Rahul', [], 'me@ok', undefined, 'x', { opening: 40000, paid: 0 }), /pending:\n\nPrevious balance — \*₹400\*\n\n\*Total: ₹400\*/);
 
 assert.equal(parseDate('05/10/2026'), '2026-10-05');
 assert.equal(parseDate('5-Oct-26'), '2026-10-05');
@@ -97,6 +103,7 @@ const csv = statementCsv([
   { ...base, created_at: '2026-10-05T18:00:00', amount: 70400, direction: 'credit', payee_name: 'Uday', category: 'Transfer' },
   { ...base, created_at: '2026-10-06T10:00:00', amount: 5000, direction: 'debit', payee_name: 'X', category: 'Other', status: 'FAILURE' },
 ]);
+assert.match(csv, /\r\n04 Oct 2026,09:30,Paid to Mkr Fuels,/);
 const back = parseStatement(csv.replace(/^﻿/, '').trim().split('\r\n').map((l) => l.split(',')));
 assert.deepEqual(back.map((r) => [r.date, r.amount, r.direction, r.ref, r.category, r.subcategory, r.note]),
   [['2026-10-04', 15000, 'debit', '627753131764', 'Fuel', 'Petrol', 'bike'], ['2026-10-05', 70400, 'credit', undefined, 'Transfer', undefined, undefined]]);
@@ -126,7 +133,13 @@ assert.equal(scopesFor([owed[3]], today).length, 1); // a lone item: "All" is th
 console.log('scope checks passed');
 
 // ── item splits, autopay dates, subscription spotting, statement methods ──
-import { itemShares, ME, nextDue, findRecurring } from './calc.ts';
+import { allocate, itemShares, ME, nextDue, findRecurring } from './calc.ts';
+// part payments: previous balance first, then whole splits oldest first, the rest waits as credit
+const owes = [{ id: 1, amount: 30000 }, { id: 2, amount: 20000 }];
+assert.deepEqual(allocate(50000, 40000, 0, owes), { opening: 0, paid: [], credit: 10000 }); // ₹500 of ₹400 old + ₹300 split: old cleared, ₹100 toward the split
+assert.deepEqual(allocate(25000, 0, 10000, owes), { opening: 0, paid: [1], credit: 5000 }); // that ₹100 + ₹250 clears the ₹300 split, ₹50 left
+assert.deepEqual(allocate(10000, 40000, 0, owes), { opening: 30000, paid: [], credit: 0 }); // only part of the old balance
+assert.deepEqual(allocate(60000, 0, 0, owes), { opening: 0, paid: [1, 2], credit: 10000 }); // paid ahead
 import { methodFromDesc } from './statement.ts';
 // ₹300 veggies with Rahul(1) and Asha(2): tomatoes ₹90 for all, paneer ₹100 just Rahul, onions ₹50 just me, ₹60 not itemised
 const sh = itemShares(30000, [1, 2], [{ amount: 9000, who: [ME, 1, 2] }, { amount: 10000, who: [1] }, { amount: 5000, who: [ME] }]);
@@ -176,6 +189,20 @@ assert.deepEqual(room.people[0].own.map((l) => [l.what, l.amount]), [['Paneer ·
 assert.deepEqual(room.people[1].carried, [{ month: '2026-10', amount: 3000 }]); // unpaid October moves into November
 assert.equal(room.people[1].due, 6666 + 3000);
 assert.equal(room.people[0].due, 10000 + 16666 + 10000);
+// each person's full history: newest first, every month, who else was in it, items with who had them
+assert.deepEqual(room.people[0].history!.map((h) => [h.date, h.what, h.share, h.paid, h.with]), [
+  ['2026-11-06', 'Movie', 10000, false, ['Me']],
+  ['2026-11-05', 'Veggies', 16666, false, ['Me', 'Priya']],
+  ['2026-11-02', 'Rent share', 10000, false, ['Me', 'Priya']],
+  ['2026-10-20', 'Milk', 3000, true, ['Me', 'Priya']],
+]);
+assert.deepEqual(room.people[0].history![1].items, [{ name: 'Paneer', amount: 10000, who: ['Rahul'] }, { name: 'Tomatoes', amount: 9000, who: ['Everyone'] }]);
+assert.equal(room.people[1].history!.length, 3); // Priya: rent, veggies, milk
+// a previous balance adds to what's due, a part payment comes off it
+const withOld = buildShare({ title: 'Room', personIds: [2], trip: null }, {
+  people: [{ id: 2, name: 'Priya', opening: 50000, credit: 2000 }], txns: [T(13, 6000, '2026-10-20T10:00:00', 'Milk')], splits: [S(6, 13, 2, 3000)],
+}, { name: 'Me', vpa: 'me@ok' }, '2026-11-20T09:00:00');
+assert.deepEqual([withOld.people[0].due, withOld.people[0].opening, withOld.people[0].partPaid], [3000 + 50000 - 2000, 50000, 2000]);
 const owing = [{ id: 1, name: 'Rahul Sharma', vpa: 'rahul@okaxis', unpaid: [{ id: 1, amount: 10000, month: '2026-10' }, { id: 2, amount: 5000, month: '2026-11' }] },
   { id: 2, name: 'Priya', vpa: null, unpaid: [{ id: 3, amount: 4000, month: '2026-11' }, { id: 4, amount: 2000, month: '2026-11' }] }];
 assert.deepEqual(settleFromCredits([{ amount: 15000, desc: 'UPI-RAHUL SHARMA-rahul@okaxis', vpa: 'rahul@okaxis' }], owing), [1, 2]); // all of it

@@ -82,3 +82,18 @@ export function settleFromCredits(credits: { amount: number; desc: string; vpa?:
   }
   return [...done];
 }
+
+// Someone pays you back (any amount): it clears their previous balance first, then whole splits oldest first.
+// What's left over (a part payment, or paying ahead) waits as credit and counts toward the next split.
+export function allocate(amount: number, opening: number, credit: number, unpaid: { id: number; amount: number }[]) {
+  let pool = amount + credit;
+  const fromOpening = Math.min(pool, opening);
+  pool -= fromOpening;
+  const paid: number[] = [];
+  for (const s of unpaid) {
+    if (s.amount > pool) break; // oldest first: a later, smaller split isn't paid before an earlier one
+    pool -= s.amount;
+    paid.push(s.id);
+  }
+  return { opening: opening - fromOpening, paid, credit: pool };
+}

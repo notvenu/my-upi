@@ -1,17 +1,28 @@
 // What a public split link shows, built from your data on your device and stored as one snapshot (so the link
 // never exposes anything else). Pure; checked by check.ts.
 import type { Item, Split, Txn } from './db';
+// ponytail: history is every split ever in the snapshot; trim to recent months if links get heavy
 
 export type SharedLine = { date: string; what: string; total: number; each: number; count: number; paidBy: number[] };
 export type OwnLine = { date: string; what: string; amount: number; paid: boolean };
-export type SharePerson = { id: number; name: string; due: number; paid: number; carried: { month: string; amount: number }[]; own: OwnLine[] };
+// One payment someone was in, in full: what it was, the bill, their share, who else was in it, and the items (who had each).
+export type HistoryLine = {
+  date: string; what: string; payee: string | null; category: string; place: string | null; trip: string | null;
+  total: number; share: number; paid: boolean; with: string[]; items: { name: string; amount: number; who: string[] }[];
+};
+export type SharePerson = {
+  id: number; name: string; due: number; paid: number; carried: { month: string; amount: number }[]; own: OwnLine[];
+  history?: HistoryLine[]; // newest first; a room link has every month, a trip link the trip. Older snapshots don't have it.
+  // room links: their previous balance, what they've paid in part, and what's owed back to them (all in due)
+  opening?: number; partPaid?: number; oweBack?: number;
+};
 export type ShareView = {
   title: string; from: { name: string; vpa: string }; updated: string;
   month: string | null; trip: string | null; // a room link covers the current month (plus anything unpaid before it); a trip link the whole trip
   shared: SharedLine[]; people: SharePerson[];
 };
 
-type Data = { txns: Txn[]; splits: Split[]; people: { id: number; name: string }[] };
+type Data = { txns: Txn[]; splits: Split[]; people: { id: number; name: string; opening?: number; credit?: number; owe?: number }[] };
 
 const whatOf = (t: Txn) => t.note || t.payee_name || t.subcategory || t.category;
 
@@ -54,6 +65,22 @@ export function buildShare(
   }
 
   const sum = (xs: Split[]) => xs.reduce((a, s) => a + s.amount, 0);
+  // first names; 0 (ME) on an item is whoever made the link
+  const first = (n: string) => n.trim().split(/\s+/)[0] || '?';
+  const owner = first(me.name || 'Payer');
+  const nameOf = (id: number | null, snapshot = '') => (id === 0 ? owner : first(d.people.find((p) => p.id === id)?.name ?? snapshot));
+  const history = (pid: number): HistoryLine[] => mine
+    .filter((s) => s.person_id === pid && (!def.trip || txnById.get(s.txn_id)!.trip === def.trip))
+    .map((s) => {
+      const t = txnById.get(s.txn_id)!;
+      const others = d.splits.filter((x) => x.txn_id === t.id && x.person_id !== pid).map((x) => nameOf(x.person_id, x.name));
+      return {
+        date: t.created_at.slice(0, 10), what: whatOf(t), payee: t.payee_name, category: t.category, place: t.place ?? null, trip: t.trip ?? null,
+        total: t.amount, share: s.amount, paid: !!s.paid_at, with: [owner, ...others],
+        items: (t.items ?? []).map((it) => ({ name: it.name, amount: it.amount, who: it.who.length ? it.who.map((id) => nameOf(id)) : ['Everyone'] })),
+      };
+    })
+    .sort((a, b) => b.date.localeCompare(a.date));
   return {
     title: def.title, from: me, updated: now, month, trip: def.trip,
     shared: shared.sort((a, b) => a.date.localeCompare(b.date)),
@@ -63,11 +90,14 @@ export function buildShare(
       // a room link carries anything unpaid from earlier months into this one
       const before = month ? theirs.filter((s) => !s.paid_at && txnById.get(s.txn_id)!.created_at.slice(0, 7) < month) : [];
       const months = [...new Set(before.map((s) => txnById.get(s.txn_id)!.created_at.slice(0, 7)))].sort();
+      // previous balance and part payments aren't tied to a trip, so only a room link counts them
+      const opening = month ? p.opening ?? 0 : 0, partPaid = month ? p.credit ?? 0 : 0, oweBack = month ? p.owe ?? 0 : 0;
       return {
-        id: p.id, name: p.name,
-        due: sum(now_.filter((s) => !s.paid_at)) + sum(before), paid: sum(now_.filter((s) => s.paid_at)),
+        id: p.id, name: p.name, opening, partPaid, oweBack,
+        due: Math.max(0, sum(now_.filter((s) => !s.paid_at)) + sum(before) + opening - partPaid - oweBack), paid: sum(now_.filter((s) => s.paid_at)),
         carried: months.map((m) => ({ month: m, amount: sum(before.filter((s) => txnById.get(s.txn_id)!.created_at.startsWith(m))) })),
         own: own.get(p.id)!.sort((a, b) => a.date.localeCompare(b.date)),
+        history: history(p.id),
       };
     }),
   };

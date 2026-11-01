@@ -81,18 +81,25 @@ export type RequestItem = { created_at: string; note: string | null; payee_name:
 
 // `about` names what the request covers ("our Goa trip splits"); without it, all pending splits.
 // `reason` overrides the payment note (a trip's name reads better than a list of shops).
-export function requestMessage(friend: string, items: RequestItem[], myVpa: string, about?: string, reason?: string): string {
-  const total = items.reduce((a, x) => a + x.amount, 0);
+// adjust: their previous balance and what they've already paid in part, when asking for everything
+export function requestMessage(friend: string, items: RequestItem[], myVpa: string, about?: string, reason?: string,
+  adjust: { opening: number; paid: number } = { opening: 0, paid: 0 }): string {
+  const total = items.reduce((a, x) => a + x.amount, 0) + adjust.opening - adjust.paid;
   const lines = items.flatMap((x, i) => [
     `${i + 1}. ${whenLabel(x.created_at)}`,
     `   ${x.note || x.payee_name || 'Expense'} — *${rupees(x.amount)}*${x.txn_amount > x.amount ? ` (your share of ${rupees(x.txn_amount)})` : ''}`,
     ...(x.note && x.payee_name ? [`   paid to ${x.payee_name}`] : []),
   ]);
+  const extra = [
+    ...(adjust.opening ? [`Previous balance — *${rupees(adjust.opening)}*`] : []),
+    ...(adjust.paid ? [`Already paid — *−${rupees(adjust.paid)}*`] : []),
+  ];
   return [
     `Hi ${friend.split(' ')[0]} 👋`,
-    `Here's what's pending from ${about ?? 'our splits'} (${items.length} item${items.length > 1 ? 's' : ''}):`,
+    items.length ? `Here's what's pending from ${about ?? 'our splits'} (${items.length} item${items.length > 1 ? 's' : ''}):` : "Here's what's pending:",
     '',
     ...lines,
+    ...(extra.length ? [...(lines.length ? [''] : []), ...extra] : []),
     '',
     `*Total: ${rupees(total)}*`,
     `Pay to UPI ID: ${myVpa}`,
