@@ -110,6 +110,7 @@ export default function PayForm({ qr: q, record = false, draft, onClose }: {
   if (mode === 'pay') return (
     <Sheet title="Pay" onClose={cancel} footer={
       <div className="stack" style={{ gap: 4 }}>
+        {/* the app opens on the scanned QR exactly as scanned; sharing the QR image or copying the UPI ID are backups for apps that decline it */}
         <button className="btn lime" onClick={pay}>Open {app.label}</button>
         {q && (
           <div className="alt">
@@ -130,7 +131,7 @@ export default function PayForm({ qr: q, record = false, draft, onClose }: {
           </>
         ) : <input className="payee-input" value={payee} onChange={(e) => setPayee(e.target.value)} placeholder="Who are you paying?" aria-label="Paying" />}
       </div>
-      <p className="sub center" style={{ margin: '14px 8px 18px' }}>Pay in your UPI app now and add the details when you&apos;re back, or fill them in first.</p>
+      <p className="sub center" style={{ margin: '14px 8px 18px' }}>{q ? `${app.label} opens on this payee; pay there, then confirm here. If it won't take it, copy the UPI ID and paste it in the app.` : "Pay in your UPI app now and add the details when you're back, or fill them in first."}</p>
       <h3 className="eyebrow">Pay with</h3>
       <Combobox label="UPI app" options={UPI_APPS.map((a) => ({ value: a, label: a.label }))} value={app} onChange={setApp} />
       <style jsx>{`
