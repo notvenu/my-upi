@@ -116,6 +116,24 @@ export function deleteTxn(id: number) {
 export const txnSplits = (txnId: number) => db.splits.filter((s) => s.txn_id === txnId);
 export function addSplits(txnId: number, splits: { personId: number; amount: number }[]) { insertSplits(txnId, splits); save(); }
 
+// Re-split a payment. Someone still in it keeps their "requested" mark, and "paid" if their share didn't change.
+// If they'd paid and their share changed (or they're out of it now), what they paid becomes credit, so it isn't lost.
+// Splits whose person was deleted are left as they are.
+export function replaceSplits(txnId: number, rows: { personId: number; amount: number }[]) {
+  const old = db.splits.filter((s) => s.txn_id === txnId && s.person_id !== null);
+  db.splits = db.splits.filter((s) => !(s.txn_id === txnId && s.person_id !== null));
+  insertSplits(txnId, rows);
+  for (const o of old) {
+    const s = db.splits.find((x) => x.txn_id === txnId && x.person_id === o.person_id);
+    if (s) s.requested_at = o.requested_at ?? s.requested_at;
+    if (!o.paid_at) continue;
+    if (s && s.amount === o.amount) { s.paid_at = o.paid_at; continue; }
+    const p = db.people.find((x) => x.id === o.person_id);
+    if (p) { p.credit = (p.credit ?? 0) + o.amount; applyCredit(p, 0); }
+  }
+  save();
+}
+
 const newestFirst = (a: Txn, b: Txn) => b.created_at.localeCompare(a.created_at);
 
 // Payments started from MyUPI and finished in a UPI app, waiting for "yes, I paid". Newest first.
