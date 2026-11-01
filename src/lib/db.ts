@@ -1,4 +1,4 @@
-import { allocate, findRecurring, nextDue, settleFromCredits, type Every } from './calc';
+import { allocate, findRecurring, nextDue, rematch, settleFromCredits, type Every } from './calc';
 import { emit } from './store';
 import { matchRows, methodFromDesc, payeeFromDesc, type StmtRow } from './statement';
 import { CATEGORIES, SUBCATEGORIES } from './upi';
@@ -36,7 +36,8 @@ export type Group = GroupRow;
 export type Owed = Split & { note: string | null; payee_name: string | null; created_at: string; txn_amount: number; trip: string | null };
 
 // A public split link for a room (people) or a trip; uuid is the link's id.
-export type ShareDef = { id: number; uuid: string; title: string; personIds: number[]; trip: string | null; groupId?: number };
+// until: the link only shows splits from payments up to that day (YYYY-MM-DD).
+export type ShareDef = { id: number; uuid: string; title: string; personIds: number[]; trip: string | null; groupId?: number; until?: string | null };
 // Money you owe someone (a person, shop, landlord…) and will pay later. paid_at: when you marked it paid.
 // Something you've put money into: a fund, FD, stocks, a savings pot. goal: a savings target, if any.
 export type Investment = { id: number; name: string; kind: string; invested: number; value: number; goal: number | null; note: string | null; updated: string };
@@ -352,6 +353,30 @@ export function linkReceived(txnId: number, personId: number | null, kind: 'repa
   else if (p) { t.owe_to = p.id; p.owe = (p.owe ?? 0) + t.amount; }
   save();
 }
+// Repayments saved before exact amounts won were put against the oldest splits. A repayment's id holds the moment it
+// was saved, and the splits it cleared were stamped paid in that same second; where one unpaid split matches its
+// amount exactly, the repayment is moved onto that split and the others go back to unpaid. Returns how many moved.
+export function rematchRepayments(): number {
+  let n = 0;
+  for (const t of db.txns.filter((x) => x.repay_of && x.direction === 'credit').sort((a, b) => a.id - b.id)) {
+    const p = db.people.find((x) => x.id === t.repay_of);
+    const at = Math.floor(t.id / 1000);
+    if (!p || at < 1e12) continue; // entries from before time-based ids carry no time
+    const cleared = db.splits.filter((s) => s.person_id === p.id && s.paid_at && Math.abs(Date.parse(s.paid_at) - at) <= 2000);
+    const r = rematch(t.amount, cleared, unpaidSplits(p.id));
+    if (!r) continue;
+    for (const s of db.splits) {
+      if (r.unpay.includes(s.id)) s.paid_at = null;
+      if (s.id === r.pay) s.paid_at = localIso(new Date(at));
+    }
+    p.credit = (p.credit ?? 0) - r.back; // what it had put toward their old balance or kept as credit comes off again
+    if (p.credit < 0) { p.opening = (p.opening ?? 0) - p.credit; p.credit = 0; }
+    n++;
+  }
+  if (n) save();
+  return n;
+}
+
 // Puts money (a repayment, or credit already waiting) against what someone owes. Doesn't save.
 function applyCredit(p: PersonRow, amount: number) {
   const r = allocate(amount, p.opening ?? 0, p.credit ?? 0, unpaidSplits(p.id).map((s) => ({ id: s.id, amount: s.amount })));
@@ -471,8 +496,8 @@ export const dismissSub = (key: string) =>
   setSetting('subs_dismissed', JSON.stringify([...JSON.parse(getSetting('subs_dismissed') || '[]'), key]));
 
 // ── split links ──
-export function addShare(title: string, personIds: number[], trip: string | null): ShareDef {
-  const def = { id: nextId(), uuid: crypto.randomUUID(), title: title.trim(), personIds, trip };
+export function addShare(title: string, personIds: number[], trip: string | null, until: string | null = null): ShareDef {
+  const def = { id: nextId(), uuid: crypto.randomUUID(), title: title.trim(), personIds, trip, until };
   db.shares.push(def);
   save();
   return def;
@@ -484,6 +509,10 @@ export function groupShare(g: Group): ShareDef {
   else db.shares.push(def = { id: nextId(), uuid: crypto.randomUUID(), title: g.name, personIds: [...g.memberIds], trip: null, groupId: g.id });
   save();
   return def;
+}
+export function setShareUntil(id: number, until: string | null) {
+  const s = db.shares.find((x) => x.id === id);
+  if (s) { s.until = until || null; save(); }
 }
 export function deleteShare(id: number) { db.shares = db.shares.filter((s) => s.id !== id); save(); }
 

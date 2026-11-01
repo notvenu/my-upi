@@ -133,13 +133,21 @@ assert.equal(scopesFor([owed[3]], today).length, 1); // a lone item: "All" is th
 console.log('scope checks passed');
 
 // ── item splits, autopay dates, subscription spotting, statement methods ──
-import { allocate, itemShares, ME, nextDue, findRecurring } from './calc.ts';
+import { allocate, itemShares, ME, nextDue, findRecurring, rematch } from './calc.ts';
 // part payments: previous balance first, then whole splits oldest first, the rest waits as credit
 const owes = [{ id: 1, amount: 30000 }, { id: 2, amount: 20000 }];
 assert.deepEqual(allocate(50000, 40000, 0, owes), { opening: 0, paid: [], credit: 10000 }); // ₹500 of ₹400 old + ₹300 split: old cleared, ₹100 toward the split
 assert.deepEqual(allocate(25000, 0, 10000, owes), { opening: 0, paid: [1], credit: 5000 }); // that ₹100 + ₹250 clears the ₹300 split, ₹50 left
 assert.deepEqual(allocate(10000, 40000, 0, owes), { opening: 30000, paid: [], credit: 0 }); // only part of the old balance
 assert.deepEqual(allocate(60000, 0, 0, owes), { opening: 0, paid: [1, 2], credit: 10000 }); // paid ahead
+// exactly one split's amount pays that split, even with older ones or an old balance waiting
+const rent = [{ id: 1, amount: 1500 }, { id: 2, amount: 2500 }, { id: 3, amount: 400000 }];
+assert.deepEqual(allocate(400000, 10000, 500, rent), { opening: 10000, paid: [3], credit: 500 });
+assert.deepEqual(allocate(4000, 0, 0, rent), { opening: 0, paid: [1, 2], credit: 0 }); // no exact match: oldest first
+// fixing an old repayment: ₹4,000 had cleared ₹15 + ₹25 + ... ; the ₹4,000 rent is paid instead, they go back to unpaid
+assert.deepEqual(rematch(400000, [{ id: 1, amount: 1500 }, { id: 2, amount: 2500 }], [{ id: 3, amount: 400000 }]), { pay: 3, unpay: [1, 2], back: 396000 });
+assert.equal(rematch(400000, [{ id: 3, amount: 400000 }], [{ id: 9, amount: 400000 }]), null); // already right
+assert.equal(rematch(400000, [{ id: 1, amount: 1500 }], [{ id: 2, amount: 2500 }]), null); // nothing matches
 import { methodFromDesc } from './statement.ts';
 // ₹300 veggies with Rahul(1) and Asha(2): tomatoes ₹90 for all, paneer ₹100 just Rahul, onions ₹50 just me, ₹60 not itemised
 const sh = itemShares(30000, [1, 2], [{ amount: 9000, who: [ME, 1, 2] }, { amount: 10000, who: [1] }, { amount: 5000, who: [ME] }]);
@@ -189,41 +197,40 @@ const room = buildShare({ title: 'Room', personIds: [1, 2], trip: null }, roomDa
 const goa = buildShare({ title: 'Goa', personIds: [1, 2], trip: 'Goa' },
   { ...roomData, txns: roomData.txns.map((t: object) => ({ ...t, trip: 'Goa' }) as never) }, { name: 'Me', vpa: 'me@ok' }, '2026-11-20T09:00:00');
 assert.equal(room.people[0].history, undefined);
-assert.deepEqual(room.people[0].ledger!.map((m) => m.month), ['2026-10', '2026-11']);
+assert.deepEqual(room.people[0].ledger!.map((m) => m.month), ['2026-11']); // his October milk is paid, so October isn't shown
 assert.deepEqual(room.shared.map((l) => [l.what, l.total, l.each, l.paidBy]), [['Rent share', 30000, 10000, [2]], ['Veggies', 20000, 6666, []]]);
 assert.deepEqual(room.people[0].own.map((l) => [l.what, l.amount]), [['Paneer · Veggies', 10000], ['Movie', 10000]]);
 assert.deepEqual(room.people[1].carried, [{ month: '2026-10', amount: 3000 }]); // unpaid October moves into November
 assert.equal(room.people[1].due, 6666 + 3000);
 assert.equal(room.people[0].due, 10000 + 16666 + 10000);
-// each person's full history: newest first, every month, who else was in it, items with who had them
-assert.deepEqual(goa.people[0].history!.map((h) => [h.date, h.what, h.share, h.paid, h.with]), [
-  ['2026-11-06', 'Movie', 10000, false, ['Me']],
-  ['2026-11-05', 'Veggies', 16666, false, ['Me', 'Priya']],
-  ['2026-11-02', 'Rent share', 10000, false, ['Me', 'Priya']],
-  ['2026-10-20', 'Milk', 3000, true, ['Me', 'Priya']],
+// each person's history: newest first, only what's unpaid (Rahul's milk is paid), who else was in it, items with who had them
+assert.deepEqual(goa.people[0].history!.map((h) => [h.date, h.what, h.share, h.with]), [
+  ['2026-11-06', 'Movie', 10000, ['Me']],
+  ['2026-11-05', 'Veggies', 16666, ['Me', 'Priya']],
+  ['2026-11-02', 'Rent share', 10000, ['Me', 'Priya']],
 ]);
 assert.deepEqual(goa.people[0].history![1].items, [{ name: 'Paneer', amount: 10000, who: ['Rahul'] }, { name: 'Tomatoes', amount: 9000, who: ['Everyone'] }]);
-assert.equal(goa.people[1].history!.length, 3); // Priya: rent, veggies, milk
-// the month sheet: September's curd; October's items, ₹30 paid back (₹10 of it still waiting as part credit),
-// paneer marked paid with no money recorded; November carries October's balance in. The last balance is what they owe.
-const R = (id: number, amount: number, at: string) => T(id, amount, at, 'UPI', { direction: 'credit', repay_of: 4 });
+assert.equal(goa.people[1].history!.length, 2); // Priya: veggies, milk (her rent share is paid)
+// the month sheet lists only what's unpaid: September's curd and October's paneer are paid, so they're gone;
+// the ₹10 part credit comes off at the end, so the last balance is what they owe
 const P = (id: number, txn: number, amount: number, paid_at: string | null) => ({ ...(S(id, txn, 4, amount) as object), paid_at }) as never;
-const sheet = ledger({ id: 4, name: 'Ravi', credit: 1000 }, {
+const sheetData = {
   people: [], txns: [T(20, 4000, '2026-09-05T10:00:00', 'Curd'), T(21, 6000, '2026-10-03T10:00:00', 'Paneer'), T(22, 2000, '2026-10-15T10:00:00', 'Milk'),
-    T(23, 9000, '2026-11-02T10:00:00', 'Rent'), R(24, 3000, '2026-10-10T10:00:00')],
+    T(23, 9000, '2026-11-02T10:00:00', 'Rent')],
   splits: [P(20, 20, 2000, '2026-10-10T10:00:00'), P(21, 21, 3000, '2026-10-25T10:00:00'), P(22, 22, 1000, null), P(23, 23, 4500, null)],
-}, '2026-11-20T09:00:00');
-assert.deepEqual(sheet.map((m) => [m.month, m.total, m.old, m.paid.map((x) => [x.what, x.amount]), m.balance]), [
-  ['2026-09', 2000, 0, [], 2000],
-  ['2026-10', 4000, 2000, [['UPI', 3000], ['Marked paid', 3000]], 0],
-  ['2026-11', 4500, 0, [], 4500],
+};
+const sheet = ledger({ id: 4, name: 'Ravi', opening: 500, credit: 1000 }, sheetData, '2026-11-20T09:00:00');
+assert.deepEqual(sheet.map((m) => [m.month, m.items.map((x) => x.what), m.total, m.old, m.paid.map((x) => [x.what, x.amount]), m.balance]), [
+  ['2026-10', ['Milk'], 1000, 500, [], 1500],
+  ['2026-11', ['Rent'], 4500, 1500, [['Paid in part', 1000]], 5000],
 ]);
-// a repayment that cleared an old balance: the sheet starts with that balance, so the sums still add up
-const cleared = ledger({ id: 4, name: 'Ravi', opening: 0 }, { people: [], txns: [R(30, 5000, '2026-10-02T10:00:00')], splits: [] }, '2026-10-20T09:00:00');
-assert.deepEqual(cleared.map((m) => [m.old, m.paid.length, m.balance]), [[5000, 1, 0]]);
-// "mark all as paid" cleared things no money covers: the leftover shows as Settled this month
-const wiped = ledger({ id: 4, name: 'Ravi' }, { people: [], txns: [T(40, 2000, '2026-11-02T10:00:00', 'Tea')], splits: [P(40, 40, 1000, null)] }, '2026-11-20T09:00:00');
-assert.equal(wiped[0].balance, 1000);
+// nothing unpaid but an old balance: one card for this month
+assert.deepEqual(ledger({ id: 4, name: 'Ravi', opening: 700 }, { people: [], txns: [], splits: [] }, '2026-11-20T09:00:00').map((m) => [m.month, m.old, m.balance]), [['2026-11', 700, 700]]);
+assert.deepEqual(ledger({ id: 4, name: 'Ravi' }, { people: [], txns: [], splits: [] }, '2026-11-20T09:00:00'), []); // all paid up
+// a link set to show payments only up to 31 Oct: November's rent isn't on it, and the link reads as October
+const upTo = buildShare({ title: 'Room', personIds: [4], trip: null, until: '2026-10-31' }, { ...sheetData, people: [{ id: 4, name: 'Ravi' }] },
+  { name: 'Me', vpa: 'me@ok' }, '2026-11-20T09:00:00');
+assert.deepEqual([upTo.month, upTo.until, upTo.people[0].due, upTo.people[0].ledger!.map((m) => m.month)], ['2026-10', '2026-10-31', 1000, ['2026-10']]);
 // a previous balance adds to what's due, a part payment comes off it
 const withOld = buildShare({ title: 'Room', personIds: [2], trip: null }, {
   people: [{ id: 2, name: 'Priya', opening: 50000, credit: 2000 }], txns: [T(13, 6000, '2026-10-20T10:00:00', 'Milk')], splits: [S(6, 13, 2, 3000)],

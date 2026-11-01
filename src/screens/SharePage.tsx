@@ -1,5 +1,5 @@
 'use client';
-import { Check, ChevronDown, QrCode } from 'lucide-react';
+import { Check, ChevronDown, Copy, QrCode } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { renderSVG } from 'uqr';
 import Avatar from '@/components/Avatar';
@@ -67,69 +67,102 @@ function History({ lines }: { lines: HistoryLine[] }) {
   );
 }
 
-// A room link: one person's months side by side, like columns in a spreadsheet, scrolled to this month.
-// Each month: its items with their share, the total, the balance carried in, what they paid, and what's carried on.
+// A room link: one person's sheet, a month at a time like a spreadsheet's tabs (this month first); on a wide
+// screen every month sits side by side. Each month: its items with their share, the total, the balance carried in,
+// what they paid, and what's carried on.
 function Months({ months }: { months: LedgerMonth[] }) {
-  const ref = useRef<HTMLDivElement>(null);
-  useEffect(() => { if (ref.current) ref.current.scrollLeft = ref.current.scrollWidth; }, [months]);
+  const [at, setAt] = useState(months.length - 1);
+  const tabs = useRef<HTMLDivElement>(null);
+  useEffect(() => { setAt(months.length - 1); }, [months]);
+  useEffect(() => { tabs.current?.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: 'nearest', inline: 'nearest' }); }, [at]);
   const short = (ym: string) => monthName(ym).split(' ')[0];
-  const noDate = (what: string) => what === 'Marked paid' || what === 'Settled';
+  const signed = (v: number) => (v < 0 ? `−${rupees(-v)}` : rupees(v));
   return (
-    <div className="months" ref={ref} tabIndex={0} aria-label="Month by month">
-      {months.map((m, i) => {
-        const last = i === months.length - 1;
-        return (
-          <section key={m.month} className="card mo" aria-label={monthName(m.month)}>
-            <h3>{monthName(m.month)}</h3>
-            <table>
-              <tbody>
-                {m.items.map((it, j) => (
-                  <tr key={j}><td className="n">{j + 1}</td><td className="d">{day(it.date)}</td><td className="w">{it.what}</td><td className="num a">{rupees(it.amount)}</td></tr>
-                ))}
-                {!m.items.length && <tr><td colSpan={4} className="sub none">Nothing new this month</td></tr>}
-              </tbody>
-              <tfoot>
-                <tr className="tot"><td colSpan={3}>Total</td><td className="num a">{rupees(m.total)}</td></tr>
-                {m.old !== 0 && <tr><td colSpan={3}>{i ? `From ${short(months[i - 1].month)}` : 'Earlier balance'}</td><td className="num a">{rupees(m.old)}</td></tr>}
+    <div className="sheet">
+      {months.length > 1 && (
+        <div className="mtabs" ref={tabs} role="tablist" aria-label="Month">
+          {months.map((m, i) => (
+            <button key={m.month} role="tab" aria-selected={i === at} className={`mt${i === at ? ' on' : ''}`} onClick={() => setAt(i)}>
+              <span>{short(m.month)}{m.month.slice(0, 4) !== months[months.length - 1].month.slice(0, 4) ? ` ${m.month.slice(2, 4)}` : ''}</span>
+              <span className="num">{signed(m.balance)}</span>
+            </button>
+          ))}
+        </div>
+      )}
+      <div className="cols">
+        {months.map((m, i) => {
+          const last = i === months.length - 1;
+          return (
+            <section key={m.month} className={`card mo${i === at ? '' : ' off'}`} aria-label={monthName(m.month)}>
+              <h3>{monthName(m.month)}</h3>
+              {m.items.length ? (
+                <ol className="items">
+                  {m.items.map((it, j) => (
+                    <li key={j}>
+                      <span className="grow" style={{ minWidth: 0 }}><span className="w">{it.what}</span><span className="d">{day(it.date)}</span></span>
+                      <span className="num">{rupees(it.amount)}</span>
+                    </li>
+                  ))}
+                </ol>
+              ) : <p className="sub none">Nothing new this month</p>}
+              <dl className="sum">
+                <div className="tot"><dt>Total</dt><dd className="num">{rupees(m.total)}</dd></div>
+                {m.old !== 0 && <div><dt>{i ? `From ${short(months[i - 1].month)}` : 'Earlier balance'}</dt><dd className="num">{signed(m.old)}</dd></div>}
                 {m.paid.map((x, j) => (
-                  <tr key={j} className="minus"><td colSpan={3}>{noDate(x.what) ? x.what : `${day(x.date)} · ${x.what}`}</td><td className="num a">−{rupees(x.amount)}</td></tr>
+                  <div key={j}><dt>{x.what}</dt><dd className="num">−{rupees(x.amount)}</dd></div>
                 ))}
-                <tr className="bal"><td colSpan={3}>{last ? 'Due now' : `Carried to ${short(months[i + 1].month)}`}</td>
-                  <td className="num a">{m.balance < 0 ? `−${rupees(-m.balance)}` : rupees(m.balance)}</td></tr>
-              </tfoot>
-            </table>
-          </section>
-        );
-      })}
+                <div className="bal"><dt>{last ? 'Due now' : `Carried to ${short(months[i + 1].month)}`}</dt><dd className="num">{signed(m.balance)}</dd></div>
+              </dl>
+            </section>
+          );
+        })}
+      </div>
       <style jsx>{`
-        .months { display: flex; gap: 10px; overflow-x: auto; scroll-snap-type: x mandatory; margin: 0 -16px; padding: 2px 16px 8px; scrollbar-width: thin; }
-        .mo { flex: 0 0 min(86%, 340px); scroll-snap-align: end; padding: 16px; }
-        h3 { font-size: 17px; font-weight: 600; margin-bottom: 8px; }
-        table { width: 100%; border-collapse: collapse; font-size: 15px; }
-        td { padding: 6px 0; vertical-align: top; }
-        tbody tr + tr td { border-top: .5px solid var(--line); }
-        .n { width: 22px; color: var(--faint); font-size: 13px; padding-top: 8px; }
-        .d { width: 58px; color: var(--sub); font-size: 13px; padding-top: 8px; white-space: nowrap; }
-        .w { padding-right: 10px; overflow-wrap: anywhere; }
-        .a { text-align: right; white-space: nowrap; }
-        .none { padding: 8px 0; }
-        tfoot td { color: var(--sub); }
-        tfoot .a { color: var(--ink); }
-        .tot td { border-top: 1px solid var(--line); padding-top: 10px; font-weight: 600; color: var(--ink); }
-        .bal td { border-top: 1px solid var(--line); padding-top: 10px; font-weight: 700; color: var(--ink); font-size: 16px; }
+        .mtabs { display: flex; gap: 6px; overflow-x: auto; margin: 0 -16px 10px; padding: 2px 16px; scrollbar-width: none; }
+        .mtabs::-webkit-scrollbar { display: none; }
+        .mt { flex-shrink: 0; display: grid; gap: 1px; padding: 7px 14px; border-radius: 14px; background: var(--card); text-align: left; font-weight: 600; font-size: 15px; min-height: 44px; }
+        .mt .num { font-size: 12px; font-weight: 500; color: var(--sub); }
+        .mt.on { background: var(--ink); color: var(--bg); }
+        .mt.on .num { color: var(--bg); opacity: .7; }
+        .mo { padding: 16px; }
+        .off { display: none; }
+        h3 { font-size: 17px; font-weight: 600; margin-bottom: 4px; }
+        .items { list-style: none; margin: 0; padding: 0; }
+        .items li { display: flex; align-items: center; gap: 12px; padding: 10px 0; }
+        .items li + li { border-top: .5px solid var(--line); }
+        .w { display: block; overflow-wrap: anywhere; }
+        .d { display: block; font-size: 13px; color: var(--sub); margin-top: 1px; }
+        .none { padding: 10px 0; }
+        .sum { margin: 8px -6px 0; padding: 6px 12px; border-radius: 14px; background: var(--bg); }
+        .sum div { display: flex; justify-content: space-between; gap: 12px; padding: 7px 0; font-size: 15px; }
+        .sum dt { color: var(--sub); min-width: 0; overflow-wrap: anywhere; }
+        .sum dd { margin: 0; white-space: nowrap; }
+        .sum .tot dt, .sum .tot dd { color: var(--ink); font-weight: 600; }
+        .sum .bal { border-top: .5px solid var(--line); margin-top: 2px; padding-top: 10px; }
+        .sum .bal dt { color: var(--ink); font-weight: 600; }
+        .sum .bal dd { font-size: 18px; font-weight: 700; }
+        /* a wide screen has room for the whole sheet: every month side by side */
+        @media (min-width: 760px) {
+          .mtabs { display: none; }
+          .cols { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 10px; align-items: start; }
+          .off { display: block; }
+        }
       `}</style>
     </div>
   );
 }
 
-// The page a split link opens: what everyone shares equally, what's on each person, what's carried over, how to pay,
-// and each person's full history.
+// The page a split link opens: what each person still owes and how to pay it. A room link shows one person's month
+// sheet at a time; a trip link what everyone shares and each person's own items. On a computer: people and paying on
+// the left (with the QR up, since a UPI link can't open there), the sheet on the right.
 export default function SharePage({ id }: { id: string }) {
   const [view, setView] = useState<ShareView | null>(null);
   const [failed, setFailed] = useState('');
   const [qrFor, setQrFor] = useState<number | null>(null);
   const [histFor, setHistFor] = useState<number | null>(null);
   const [pick, setPick] = useState<number | null>(null);
+  const [copied, setCopied] = useState(false);
+  const copyVpa = async () => { try { await navigator.clipboard.writeText(view!.from.vpa); setCopied(true); setTimeout(() => setCopied(false), 1800); } catch { /* no clipboard: the ID is on screen */ } };
 
   useEffect(() => {
     async function load() {
@@ -146,7 +179,7 @@ export default function SharePage({ id }: { id: string }) {
     return () => document.removeEventListener('visibilitychange', again);
   }, [id]);
 
-  const period = view ? (view.trip ? view.trip : view.month ? monthName(view.month) : '') : '';
+  const period = view ? (view.trip ? view.trip : view.until ? `Up to ${monthName(view.until.slice(0, 7))}` : view.month ? monthName(view.month) : '') : '';
   useEffect(() => { document.title = view ? `${view.title} · ${period}` : 'Split'; }, [view, period]);
   // a room link shows one person at a time, picked from chips
   const room = !!view?.people.some((p) => p.ledger);
@@ -168,6 +201,8 @@ export default function SharePage({ id }: { id: string }) {
                 <p className="sub">Shared with {view.people.map((p) => p.name).join(', ')}</p>
               </header>
 
+              <div className="layout">
+                <aside className="side">
               {room && view.people.length > 1 && (
                 <div className="chips" role="tablist" aria-label="Whose sheet">
                   {view.people.map((p) => (
@@ -185,6 +220,7 @@ export default function SharePage({ id }: { id: string }) {
                       <div className="grow" style={{ minWidth: 0 }}>
                         <p className="ellipsis" style={{ fontWeight: 600 }}>{p.name}</p>
                         {/* room links: the month sheet below says all this, line by line */}
+                        {p.ledger && <p className="sub" style={{ fontSize: 14 }}>{p.due ? 'Due now' : 'All paid up'}</p>}
                         {!p.ledger && <p className="sub" style={{ fontSize: 14 }}>
                           {[
                             p.paid ? `${rupees(p.paid)} paid` : '',
@@ -203,12 +239,11 @@ export default function SharePage({ id }: { id: string }) {
                           <a className="btn lime" href={payUri(p.due)}>Pay {rupees(p.due)}</a>
                           <button className="btn soft" aria-label={`Show QR to pay ${p.name}'s share`} aria-pressed={qrFor === p.id} onClick={() => setQrFor(qrFor === p.id ? null : p.id)}><QrCode size={18} /></button>
                         </div>
-                        {qrFor === p.id && (
-                          <div className="qr">
-                            <div className="code" dangerouslySetInnerHTML={{ __html: renderSVG(payUri(p.due), { border: 1 }) }} />
-                            <p className="sub">Scan with any UPI app · {view.from.vpa}</p>
-                          </div>
-                        )}
+                        <div className={`qr${qrFor === p.id ? ' open' : ''}`}>
+                          <div className="code" dangerouslySetInnerHTML={{ __html: renderSVG(payUri(p.due), { border: 1 }) }} />
+                          <p className="sub">Scan with any UPI app to pay {rupees(p.due)}</p>
+                          <button className="btn soft copy" onClick={copyVpa}>{copied ? <><Check size={16} /> Copied</> : <><Copy size={16} /> {view.from.vpa}</>}</button>
+                        </div>
                       </>
                     )}
                     {!!p.history?.length && (
@@ -224,12 +259,20 @@ export default function SharePage({ id }: { id: string }) {
                 ))}
               </section>
 
-              {sel?.ledger && (
+                </aside>
+                <div className="body">
+              {sel?.ledger && (sel.ledger.length ? (
                 <>
-                  <h2 className="eyebrow">Month by month</h2>
+                  <h2 className="eyebrow first">What&apos;s unpaid, month by month</h2>
                   <Months months={sel.ledger} />
                 </>
-              )}
+              ) : (
+                <div className="card done">
+                  <Check size={26} style={{ color: 'var(--lime)' }} />
+                  <p style={{ fontWeight: 600, fontSize: 18 }}>{sel.name.split(' ')[0]} is all paid up</p>
+                  <p className="sub">Nothing unpaid{view.until ? ` up to ${day(view.until)}` : ''}.</p>
+                </div>
+              ))}
 
               {!room && view.shared.length > 0 && (
                 <>
@@ -265,12 +308,15 @@ export default function SharePage({ id }: { id: string }) {
 
               {!room && !view.shared.length && !view.people.some((p) => p.own.length) && <p className="sub center" style={{ marginTop: 32 }}>Nothing split {view.month ? 'this month' : 'yet'}.</p>}
               {!room && view.people.some((p) => p.carried.length) && <p className="hint" style={{ marginTop: 20 }}>Anything unpaid from an earlier month is carried into this one until it&apos;s paid.</p>}
+                </div>
+              </div>
               <p className="hint center" style={{ margin: '32px 0' }}>Made with MyUPI</p>
             </>
           )}
       </main>
       <style jsx>{`
-        .scroller { position: fixed; inset: 0; overflow-y: auto; }
+        .scroller { position: fixed; inset: 0; overflow-y: auto; scrollbar-width: none; }
+        .scroller::-webkit-scrollbar { display: none; }
         .share { max-width: 720px; margin: 0 auto; padding: calc(env(safe-area-inset-top) + 28px) 16px 24px; min-height: 100dvh; }
         header { margin-bottom: 20px; }
         h1 { font-size: 34px; font-weight: 700; letter-spacing: -0.03em; margin: 2px 0; }
@@ -281,7 +327,11 @@ export default function SharePage({ id }: { id: string }) {
         .pay { display: grid; grid-template-columns: 1fr auto; gap: 8px; margin-top: 14px; }
         .pay .btn { text-decoration: none; }
         .pay .soft { width: 52px; padding: 0; }
-        .qr { display: grid; justify-items: center; gap: 8px; margin-top: 14px; }
+        .qr { display: none; justify-items: center; gap: 8px; margin-top: 14px; }
+        .qr.open { display: grid; }
+        .copy { min-height: 40px; font-size: 14px; padding: 0 14px; max-width: 100%; }
+        .first { margin-top: 18px; }
+        .done { display: grid; justify-items: center; gap: 4px; text-align: center; padding: 28px 20px; margin-top: 18px; }
         .code :global(svg) { width: 200px; height: 200px; background: #fff; border-radius: 12px; padding: 6px; display: block; }
         .line { gap: 12px; }
         .paid { color: var(--faint); text-decoration: line-through; }
@@ -293,6 +343,23 @@ export default function SharePage({ id }: { id: string }) {
         .chip .num { font-size: 13px; font-weight: 500; color: var(--sub); }
         .chip.on { background: var(--lime); color: var(--on-lime); }
         .chip.on .num { color: var(--on-lime); opacity: .75; }
+        /* a computer: people and paying on the left, held in place; the sheet on the right */
+        @media (min-width: 900px) {
+          .share { max-width: 1160px; padding: 48px 32px 24px; }
+          h1 { font-size: 44px; }
+          header { margin-bottom: 28px; }
+          .layout { display: grid; grid-template-columns: 340px minmax(0, 1fr); gap: 32px; align-items: start; }
+          .side { position: sticky; top: 24px; }
+          .chips { flex-direction: column; overflow: visible; margin: 0 0 12px; padding: 0; gap: 6px; }
+          .chip { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 12px 16px; }
+          .chip:not(.on):hover { background: var(--raised); }
+          .chip .num { font-size: 14px; }
+          .people { grid-template-columns: 1fr; }
+          .pay { display: none; } /* a UPI link can't open on a computer: the QR is up instead */
+          .qr { display: grid; }
+          .first { margin-top: 0; }
+          .done { margin-top: 0; }
+        }
       `}</style>
     </div>
   );

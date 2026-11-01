@@ -1,7 +1,7 @@
 'use client';
 import { ChartPie, CircleCheck, History as HistoryIcon, House, ScanLine, UserRound, Users } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
-import { logDueSubs, toConfirm } from '@/lib/db';
+import { getSetting, logDueSubs, rematchRepayments, setSetting, toConfirm } from '@/lib/db';
 import { nav, openPay, setNav, type Tab } from '@/lib/nav';
 import { setScrollY, useStore } from '@/lib/store';
 import { startSync, supabase, sync } from '@/lib/sync';
@@ -77,6 +77,14 @@ export default function App() {
     navigator.storage?.persist?.(); // ask the browser not to evict the data
     return () => document.removeEventListener('visibilitychange', check);
   }, []);
+
+  // once, after the first full sync: repayments that went to the oldest splits move to the split with their exact amount
+  useEffect(() => {
+    if (!sync.checked || (supabase && sync.status !== 'synced') || getSetting('rematched')) return;
+    const n = rematchRepayments();
+    setSetting('rematched', '1');
+    if (n) toast(`${n} repayment${n > 1 ? 's' : ''} moved to the split with the same amount`);
+  }, [sync.checked, sync.status]);
 
   // toast banner: shown for each new message, then lifts away
   const [toastShown, setToastShown] = useState(false);

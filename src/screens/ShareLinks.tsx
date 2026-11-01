@@ -2,8 +2,9 @@
 import { ExternalLink, Link2, Share2, Trash2 } from 'lucide-react';
 import { useState } from 'react';
 import Combobox from '@/components/Combobox';
+import LinkMonths from '@/components/LinkMonths';
 import Sheet from '@/components/Sheet';
-import { addShare, db, deleteShare, listGroups, listPeople, listTrips } from '@/lib/db';
+import { addShare, db, deleteShare, listGroups, listPeople, listTrips, setShareUntil } from '@/lib/db';
 import { shareUrl, sync, syncNow } from '@/lib/sync';
 import { ask, shareText, toast } from '@/lib/ui';
 
@@ -65,6 +66,7 @@ export default function ShareLinks({ onClose }: { onClose: () => void }) {
                   <span className="sub ellipsis" style={{ display: 'block', fontSize: 14 }}>{s.trip ? `Trip: ${s.trip}` : 'Monthly'} · {s.personIds.map(nameOf).join(', ')}</span>
                 </span>
               </div>
+              {!s.trip && <div className="until"><LinkMonths until={s.until} onChange={(u) => setShareUntil(s.id, u)} /></div>}
               <div className="acts">
                 <button className="btn lime" onClick={() => send(s.uuid, s.title)}><Share2 size={17} /> Share</button>
                 <a className="btn soft" href={shareUrl(s.uuid)} target="_blank" rel="noopener"><ExternalLink size={17} /> Open</a>
@@ -89,6 +91,7 @@ export default function ShareLinks({ onClose }: { onClose: () => void }) {
         .acts { display: grid; grid-template-columns: 1fr 1fr auto; gap: 8px; margin-top: 12px; }
         .acts .btn { text-decoration: none; }
         .acts .del { width: 52px; padding: 0; color: var(--red); }
+        .until { margin-top: 12px; padding-top: 12px; border-top: .5px solid var(--line); }
       `}</style>
     </Sheet>
   );

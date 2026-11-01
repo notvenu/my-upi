@@ -83,9 +83,12 @@ export function settleFromCredits(credits: { amount: number; desc: string; vpa?:
   return [...done];
 }
 
-// Someone pays you back (any amount): it clears their previous balance first, then whole splits oldest first.
-// What's left over (a part payment, or paying ahead) waits as credit and counts toward the next split.
+// Someone pays you back (any amount). Exactly one split's amount (the ₹4,000 rent) pays that split. Otherwise it clears
+// their previous balance first, then whole splits oldest first, and what's left over (a part payment, or paying ahead)
+// waits as credit and counts toward the next split.
 export function allocate(amount: number, opening: number, credit: number, unpaid: { id: number; amount: number }[]) {
+  const exact = amount > 0 ? unpaid.find((s) => s.amount === amount) : undefined;
+  if (exact) return { opening, paid: [exact.id], credit };
   let pool = amount + credit;
   const fromOpening = Math.min(pool, opening);
   pool -= fromOpening;
@@ -96,4 +99,13 @@ export function allocate(amount: number, opening: number, credit: number, unpaid
     paid.push(s.id);
   }
   return { opening: opening - fromOpening, paid, credit: pool };
+}
+
+// Fixing a repayment that was put against the oldest splits (before exact amounts won): `cleared` are the splits it
+// marked paid then. If an unpaid split matches its amount exactly, those go back to unpaid and that split is paid.
+// `back` is what the repayment had put toward their old balance or kept as credit; it comes off again.
+export function rematch(amount: number, cleared: { id: number; amount: number }[], unpaid: { id: number; amount: number }[]) {
+  const exact = unpaid.find((s) => s.amount === amount);
+  if (!exact || (cleared.length === 1 && cleared[0].amount === amount)) return null;
+  return { pay: exact.id, unpay: cleared.map((s) => s.id), back: amount - cleared.reduce((a, s) => a + s.amount, 0) };
 }

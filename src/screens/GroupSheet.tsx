@@ -2,8 +2,9 @@
 import { ArrowDownLeft, Link2, Pencil, Plus } from 'lucide-react';
 import { useState } from 'react';
 import Avatar from '@/components/Avatar';
+import LinkMonths from '@/components/LinkMonths';
 import Sheet from '@/components/Sheet';
-import { groupShare, listPeople, type Group } from '@/lib/db';
+import { db, groupShare, listPeople, setShareUntil, type Group } from '@/lib/db';
 import { openPay } from '@/lib/nav';
 import { shareUrl, sync, syncNow } from '@/lib/sync';
 import { haptic, shareText, toast } from '@/lib/ui';
@@ -17,6 +18,10 @@ export default function GroupSheet({ g, onClose, onEdit }: { g: Group; onClose: 
   const owedTotal = members.reduce((a, p) => a + Math.max(0, p.owed), 0);
   const [asking, setAsking] = useState<number | null>(null);
   const asked = people.find((p) => p.id === asking);
+  const def = db.shares.find((s) => s.groupId === g.id);
+  // the months the link covers, kept here until the link exists
+  const [until, setUntil] = useState<string | null>(def?.until ?? null);
+  const pickUntil = (v: string | null) => { setUntil(v); if (def) setShareUntil(def.id, v); };
 
   function add() {
     haptic();
@@ -25,6 +30,7 @@ export default function GroupSheet({ g, onClose, onEdit }: { g: Group; onClose: 
   }
   async function link() {
     const def = groupShare(g);
+    if ((def.until ?? null) !== until) setShareUntil(def.id, until);
     await syncNow();
     const how = await shareText(`${g.name}: what everyone owes`, shareUrl(def.uuid));
     if (how) toast(how === 'copied' ? 'Link copied' : 'Link shared');
@@ -47,7 +53,14 @@ export default function GroupSheet({ g, onClose, onEdit }: { g: Group; onClose: 
           <button className="btn lime" disabled={!members.length} onClick={add}><Plus size={18} strokeWidth={2.4} /> Add expense</button>
           {sync.email && members.length > 0 && <button className="btn soft" onClick={link}><Link2 size={17} /> Share link</button>}
         </div>
-        {sync.email && members.length > 0 && <p className="hint">One link for {g.name}: this month&apos;s splits, anything unpaid carried over, and each person&apos;s history.</p>}
+        {sync.email && members.length > 0 && (
+          <>
+            <div className="list" style={{ marginTop: 10 }}>
+              <div className="item"><span className="grow"><LinkMonths until={until} onChange={pickUntil} /></span></div>
+            </div>
+            <p className="hint">One link for {g.name}: what each person still owes, month by month.</p>
+          </>
+        )}
 
         {members.length > 0 && (
           <>
@@ -71,6 +84,7 @@ export default function GroupSheet({ g, onClose, onEdit }: { g: Group; onClose: 
           .faces { display: flex; justify-content: center; align-items: center; margin-top: 14px; }
           .faces :global(.av) { box-shadow: 0 0 0 2px var(--card); }
           .faces :global(.av + .av) { margin-left: -8px; }
+          .date { color: var(--ink); color-scheme: dark; font-size: 15px; }
           .acts { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; margin-top: 12px; }
         `}</style>
       </Sheet>
