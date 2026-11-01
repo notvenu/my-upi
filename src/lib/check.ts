@@ -10,7 +10,10 @@ assert.equal(parseUpiQr('https://example.com'), null);
 
 assert.equal(personQr('rahul@okaxis', 'Rahul S').raw, 'upi://pay?pa=rahul@okaxis&pn=Rahul%20S');
 assert.equal(simplePayUri('me@ok', 'Me', 650, 'Dinner, DMart'), 'upi://pay?pa=me@ok&pn=Me&am=650.00&cu=INR&tn=Dinner%2C%20DMart');
-assert.equal(upiIntent('com.phonepe.app'), 'intent://pay#Intent;scheme=upi;package=com.phonepe.app;end'); // opens the app with nothing filled in
+// opening a UPI app: a scanned QR goes over exactly as scanned; with none, the app's Play Store page
+assert.equal(upiIntent('money.super.payments', 'upi://pay?pa=cafe@okaxis&pn=Cafe%20Coffee&mc=5812&tr=ABC1'),
+  'intent://pay?pa=cafe@okaxis&pn=Cafe%20Coffee&mc=5812&tr=ABC1#Intent;scheme=upi;package=money.super.payments;end');
+assert.equal(upiIntent('com.phonepe.app'), 'https://play.google.com/store/apps/details?id=com.phonepe.app');
 
 
 assert.equal(requestReason(['Dinner', 'dinner ', 'Groceries']), 'Dinner, dinner, Groceries');

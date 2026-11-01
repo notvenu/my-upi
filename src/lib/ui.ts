@@ -148,9 +148,9 @@ export const setPreferredApp = (pkg: string) => setSetting('upi_app', pkg);
 
 // Only Chrome on Android can open another app by its package; on a laptop or iPhone you pay on the phone and record it here.
 export const canOpenApps = /Android/i.test(navigator.userAgent);
-// Opens that UPI app with nothing filled in; you scan and pay there.
-export function openUpiApp(pkg: string) {
-  location.href = upiIntent(pkg);
+// Opens that UPI app on the scanned QR's payee (the QR as scanned), or its Play Store page when there's no QR.
+export function openUpiApp(pkg: string, qr?: string) {
+  location.href = upiIntent(pkg, qr);
 }
 // Pay in your UPI app: logged here as unconfirmed, then the app opens. Back here, "did you pay?" asks the amount and details.
 export function payInApp(app = preferredApp()) {
