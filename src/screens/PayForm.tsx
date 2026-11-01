@@ -1,5 +1,5 @@
 'use client';
-import { CalendarDays, Copy, LocateFixed, MapPin, MessageSquareText, ReceiptText, Share2 } from 'lucide-react';
+import { CalendarDays, LocateFixed, MapPin, MessageSquareText, ReceiptText } from 'lucide-react';
 import { useState } from 'react';
 import Avatar from '@/components/Avatar';
 import BillField from '@/components/BillField';
@@ -13,7 +13,7 @@ import TripField from '@/components/TripField';
 import { addTxn, tripGroup, type Method } from '@/lib/db';
 import { setNav, type PayDraft } from '@/lib/nav';
 import { useSplit } from '@/lib/split';
-import { canOpenApps, currentPlace, haptic, markOpened, openUpiApp, preferredApp, removeBill, setPreferredApp, shareQrImage, toast, toPaise, UPI_APPS, ymd } from '@/lib/ui';
+import { canOpenApps, currentPlace, haptic, markOpened, openUpiApp, preferredApp, removeBill, setPreferredApp, toast, toPaise, UPI_APPS, ymd } from '@/lib/ui';
 import { cleanAmount, rupees, type UpiQr } from '@/lib/upi';
 
 const METHODS: [Method, string][] = [['cash', 'Cash'], ['card', 'Card'], ['upi', 'UPI']];
@@ -57,29 +57,13 @@ export default function PayForm({ qr: q, record = false, draft, onClose }: {
 
   const cancel = () => { removeBill(bill); onClose(false); };
 
-  // Saved as unconfirmed; coming back here asks "did you pay?" and the details.
-  function logPending() {
+  // Saved as unconfirmed (with the scanned payee), then the app's Play Store page opens. Coming back asks "did you pay?".
+  function pay() {
     const id = addTxn({ amount: q?.amount ? toPaise(String(q.amount)) : 0, payee_vpa: q?.vpa ?? null, payee_name: name || 'Payment', status: 'PENDING', source: 'app', method: 'upi', app: app.label });
     setPreferredApp(app.pkg);
     markOpened(id);
     onClose(true);
-  }
-  // Three ways into the UPI app, for when one gets declined: open it on the QR, share the QR image to it, or copy the UPI ID.
-  function pay() {
-    logPending();
-    openUpiApp(app.pkg, q?.raw);
-  }
-  async function shareQr() {
-    if (!q) return;
-    if (await shareQrImage(q.raw, `Pay ${q.name}`)) logPending();
-    else toast("Couldn't share the QR from this browser");
-  }
-  async function copyVpa() {
-    if (!q) return;
-    try { await navigator.clipboard.writeText(q.vpa); } catch { toast(`Copy didn't work. The UPI ID is ${q.vpa}`); return; }
-    toast(`${q.vpa} copied. Paste it in ${app.label}'s "Pay UPI ID"`);
-    logPending();
-    openUpiApp(app.pkg); // its Play Store page: tap Open
+    openUpiApp(app.pkg);
   }
 
   const entry = () => ({
@@ -93,7 +77,7 @@ export default function PayForm({ qr: q, record = false, draft, onClose }: {
     setPreferredApp(app.pkg);
     markOpened(id);
     onClose(true);
-    openUpiApp(app.pkg, q?.raw);
+    openUpiApp(app.pkg);
   }
   const payAfter = canOpenApps && direction === 'debit' && method === 'upi';
 
@@ -110,14 +94,7 @@ export default function PayForm({ qr: q, record = false, draft, onClose }: {
   if (mode === 'pay') return (
     <Sheet title="Pay" onClose={cancel} footer={
       <div className="stack" style={{ gap: 4 }}>
-        {/* the app opens on the scanned QR exactly as scanned; sharing the QR image or copying the UPI ID are backups for apps that decline it */}
         <button className="btn lime" onClick={pay}>Open {app.label}</button>
-        {q && (
-          <div className="alt">
-            <button className="btn soft" onClick={shareQr}><Share2 size={17} /> Share QR</button>
-            <button className="btn soft" onClick={copyVpa}><Copy size={17} /> Copy UPI ID</button>
-          </div>
-        )}
         <button className="btn soft" onClick={() => { haptic(); setMode('record'); }}>Fill in details now, pay after</button>
         <button className="btn ghost" onClick={() => { haptic(); setMethod('cash'); setMode('record'); }}>Paid by cash or card instead</button>
       </div>
@@ -131,16 +108,12 @@ export default function PayForm({ qr: q, record = false, draft, onClose }: {
           </>
         ) : <input className="payee-input" value={payee} onChange={(e) => setPayee(e.target.value)} placeholder="Who are you paying?" aria-label="Paying" />}
       </div>
-      <p className="sub center" style={{ margin: '14px 8px 18px' }}>{q ? `${app.label} opens on this payee; pay there, then confirm here. If it won't take it, copy the UPI ID and paste it in the app.` : "Pay in your UPI app now and add the details when you're back, or fill them in first."}</p>
+      <p className="sub center" style={{ margin: '14px 8px 18px' }}>Pay in your UPI app now and add the details when you&apos;re back, or fill them in first.</p>
       <h3 className="eyebrow">Pay with</h3>
       <Combobox label="UPI app" options={UPI_APPS.map((a) => ({ value: a, label: a.label }))} value={app} onChange={setApp} />
       <style jsx>{`
         .payee { display: grid; justify-items: center; margin-top: 4px; }
         .payee-input { width: 100%; font-size: 22px; font-weight: 600; text-align: center; min-height: 56px; margin-top: 6px; letter-spacing: -0.02em; }
-      `}</style>
-      <style jsx>{`
-        .alt { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
-        .alt .btn { min-height: 46px; font-size: 15px; }
       `}</style>
     </Sheet>
   );

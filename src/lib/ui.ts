@@ -4,8 +4,7 @@ import {
 } from 'lucide-react';
 import { addTxn, getSetting, methodOf, setSetting, type Txn } from './db';
 import { emit } from './store';
-import { renderSVG } from 'uqr';
-import { upiIntent } from './upi';
+import { appPage } from './upi';
 
 // Each category: an icon and an iOS system colour as [increased-contrast light, dark-mode variant].
 // The icon square always uses the deep one so the white glyph clears 3:1; bars and text pick per theme.
@@ -149,32 +148,14 @@ export const setPreferredApp = (pkg: string) => setSetting('upi_app', pkg);
 
 // Only Chrome on Android can open another app by its package; on a laptop or iPhone you pay on the phone and record it here.
 export const canOpenApps = /Android/i.test(navigator.userAgent);
-// Opens that UPI app on the scanned QR's payee (the QR as scanned), or its Play Store page when there's no QR.
-export function openUpiApp(pkg: string, qr?: string) {
-  location.href = upiIntent(pkg, qr);
+// Opens that UPI app's Play Store page; tap Open there, then scan and pay in the app.
+export function openUpiApp(pkg: string) {
+  location.href = appPage(pkg);
 }
 // Pay in your UPI app: logged here as unconfirmed, then the app opens. Back here, "did you pay?" asks the amount and details.
 export function payInApp(app = preferredApp()) {
   markOpened(addTxn({ amount: 0, payee_name: 'Payment', status: 'PENDING', source: 'app', method: 'upi', app: app.label }));
   openUpiApp(app.pkg);
-}
-
-// The scanned QR redrawn as an image and handed to Android's share sheet: some UPI apps take a shared QR image and open
-// its payment, which a link from a web page can't always do. False if this browser can't share images, or it was cancelled.
-export async function shareQrImage(raw: string, title: string): Promise<boolean> {
-  const img = new Image();
-  img.src = URL.createObjectURL(new Blob([renderSVG(raw, { border: 2 })], { type: 'image/svg+xml' }));
-  try { await img.decode(); } catch { return false; } finally { URL.revokeObjectURL(img.src); }
-  const c = document.createElement('canvas');
-  c.width = c.height = 720;
-  const ctx = c.getContext('2d')!;
-  ctx.fillStyle = '#fff';
-  ctx.fillRect(0, 0, 720, 720);
-  ctx.drawImage(img, 0, 0, 720, 720);
-  const png = await new Promise<Blob | null>((ok) => c.toBlob(ok, 'image/png'));
-  const file = png && new File([png], 'upi-qr.png', { type: 'image/png' });
-  if (!file || !navigator.canShare?.({ files: [file] })) return false;
-  try { await navigator.share({ files: [file], title }); return true; } catch { return false; }
 }
 
 // Share sheet on phones; copies to the clipboard where there is none (most laptops). False if cancelled.

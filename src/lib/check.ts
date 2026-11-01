@@ -1,6 +1,6 @@
 // Logic self-check: `npm run check`
 import assert from 'node:assert/strict';
-import { cleanAmount, parseUpiQr, personQr, simplePayUri, upiIntent, requestMessage, requestReason, rupees, whenLabel } from './upi.ts';
+import { cleanAmount, parseUpiQr, personQr, simplePayUri, appPage, requestMessage, requestReason, rupees, whenLabel } from './upi.ts';
 import { matchRows, parseDate, parseStatement, statementCsv } from './statement.ts';
 
 const qr = parseUpiQr('upi://pay?pa=cafe.coffee@okaxis&pn=Cafe%20Coffee&mc=5812&tr=ABC1')!;
@@ -10,10 +10,7 @@ assert.equal(parseUpiQr('https://example.com'), null);
 
 assert.equal(personQr('rahul@okaxis', 'Rahul S').raw, 'upi://pay?pa=rahul@okaxis&pn=Rahul%20S');
 assert.equal(simplePayUri('me@ok', 'Me', 650, 'Dinner, DMart'), 'upi://pay?pa=me@ok&pn=Me&am=650.00&cu=INR&tn=Dinner%2C%20DMart');
-// opening a UPI app: a scanned QR goes over exactly as scanned; with none, the app's Play Store page
-assert.equal(upiIntent('money.super.payments', 'upi://pay?pa=cafe@okaxis&pn=Cafe%20Coffee&mc=5812&tr=ABC1'),
-  'intent://pay?pa=cafe@okaxis&pn=Cafe%20Coffee&mc=5812&tr=ABC1#Intent;scheme=upi;package=money.super.payments;end');
-assert.equal(upiIntent('com.phonepe.app'), 'https://play.google.com/store/apps/details?id=com.phonepe.app');
+assert.equal(appPage('com.phonepe.app'), 'https://play.google.com/store/apps/details?id=com.phonepe.app'); // Open {app}: its Play Store page
 
 
 assert.equal(requestReason(['Dinner', 'dinner ', 'Groceries']), 'Dinner, dinner, Groceries');

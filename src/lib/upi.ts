@@ -47,14 +47,9 @@ export function simplePayUri(vpa: string, name: string, amount: number, note: st
   return `upi://pay?pa=${vpa}&pn=${encodeURIComponent(name)}&am=${amount.toFixed(2)}&cu=INR${tn ? `&tn=${encodeURIComponent(tn)}` : ''}`;
 }
 
-// The link that opens one UPI app (an Android package) from the browser. A web page can only hand an app a payment link:
-// an app's home screen can't be started from Chrome, and an empty upi://pay shows "invalid QR". So with a scanned QR the app
-// gets exactly that QR, nothing added, and opens on that payee as if scanned there; without one, its Play Store page
-// (tap Open there).
-export function upiIntent(pkg: string, qr?: string): string {
-  const i = qr?.indexOf('?') ?? -1;
-  return i >= 0 ? `intent://pay${qr!.slice(i)}#Intent;scheme=upi;package=${pkg};end` : `https://play.google.com/store/apps/details?id=${pkg}`;
-}
+// Where "Open {app}" goes: the app's Play Store page, where you tap Open. A website can't start an app's home screen
+// directly, and the payment links it can send were declined or showed "invalid QR"; you scan and pay in the app.
+export const appPage = (pkg: string) => `https://play.google.com/store/apps/details?id=${pkg}`;
 
 // The note UPI apps show on the payment screen ("tn"): the reasons, squeezed into ~50 chars since apps truncate.
 export function requestReason(reasons: string[]): string {
