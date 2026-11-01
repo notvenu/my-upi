@@ -1,5 +1,5 @@
 'use client';
-import { CalendarDays, LocateFixed, MapPin, MessageSquareText, ReceiptText } from 'lucide-react';
+import { CalendarDays, Copy, LocateFixed, MapPin, MessageSquareText, ReceiptText, Share2 } from 'lucide-react';
 import { useState } from 'react';
 import Avatar from '@/components/Avatar';
 import BillField from '@/components/BillField';
@@ -13,7 +13,7 @@ import TripField from '@/components/TripField';
 import { addTxn, tripGroup, type Method } from '@/lib/db';
 import { setNav, type PayDraft } from '@/lib/nav';
 import { useSplit } from '@/lib/split';
-import { canOpenApps, currentPlace, haptic, markOpened, openUpiApp, preferredApp, removeBill, setPreferredApp, toast, toPaise, UPI_APPS, ymd } from '@/lib/ui';
+import { canOpenApps, currentPlace, haptic, markOpened, openUpiApp, preferredApp, removeBill, setPreferredApp, shareQrImage, toast, toPaise, UPI_APPS, ymd } from '@/lib/ui';
 import { cleanAmount, rupees, type UpiQr } from '@/lib/upi';
 
 const METHODS: [Method, string][] = [['cash', 'Cash'], ['card', 'Card'], ['upi', 'UPI']];
@@ -57,13 +57,29 @@ export default function PayForm({ qr: q, record = false, draft, onClose }: {
 
   const cancel = () => { removeBill(bill); onClose(false); };
 
-  // Saved as unconfirmed, then the UPI app opens like tapping its icon. Coming back asks "did you pay?" and the details.
-  function pay() {
+  // Saved as unconfirmed; coming back here asks "did you pay?" and the details.
+  function logPending() {
     const id = addTxn({ amount: q?.amount ? toPaise(String(q.amount)) : 0, payee_vpa: q?.vpa ?? null, payee_name: name || 'Payment', status: 'PENDING', source: 'app', method: 'upi', app: app.label });
     setPreferredApp(app.pkg);
     markOpened(id);
     onClose(true);
+  }
+  // Three ways into the UPI app, for when one gets declined: open it on the QR, share the QR image to it, or copy the UPI ID.
+  function pay() {
+    logPending();
     openUpiApp(app.pkg, q?.raw);
+  }
+  async function shareQr() {
+    if (!q) return;
+    if (await shareQrImage(q.raw, `Pay ${q.name}`)) logPending();
+    else toast("Couldn't share the QR from this browser");
+  }
+  async function copyVpa() {
+    if (!q) return;
+    try { await navigator.clipboard.writeText(q.vpa); } catch { toast(`Copy didn't work. The UPI ID is ${q.vpa}`); return; }
+    toast(`${q.vpa} copied. Paste it in ${app.label}'s "Pay UPI ID"`);
+    logPending();
+    openUpiApp(app.pkg); // its Play Store page: tap Open
   }
 
   const entry = () => ({
@@ -95,6 +111,12 @@ export default function PayForm({ qr: q, record = false, draft, onClose }: {
     <Sheet title="Pay" onClose={cancel} footer={
       <div className="stack" style={{ gap: 4 }}>
         <button className="btn lime" onClick={pay}>Open {app.label}</button>
+        {q && (
+          <div className="alt">
+            <button className="btn soft" onClick={shareQr}><Share2 size={17} /> Share QR</button>
+            <button className="btn soft" onClick={copyVpa}><Copy size={17} /> Copy UPI ID</button>
+          </div>
+        )}
         <button className="btn soft" onClick={() => { haptic(); setMode('record'); }}>Fill in details now, pay after</button>
         <button className="btn ghost" onClick={() => { haptic(); setMethod('cash'); setMode('record'); }}>Paid by cash or card instead</button>
       </div>
@@ -114,6 +136,10 @@ export default function PayForm({ qr: q, record = false, draft, onClose }: {
       <style jsx>{`
         .payee { display: grid; justify-items: center; margin-top: 4px; }
         .payee-input { width: 100%; font-size: 22px; font-weight: 600; text-align: center; min-height: 56px; margin-top: 6px; letter-spacing: -0.02em; }
+      `}</style>
+      <style jsx>{`
+        .alt { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+        .alt .btn { min-height: 46px; font-size: 15px; }
       `}</style>
     </Sheet>
   );

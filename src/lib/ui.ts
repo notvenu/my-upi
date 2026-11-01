@@ -4,6 +4,7 @@ import {
 } from 'lucide-react';
 import { addTxn, getSetting, methodOf, setSetting, type Txn } from './db';
 import { emit } from './store';
+import { renderSVG } from 'uqr';
 import { upiIntent } from './upi';
 
 // Each category: an icon and an iOS system colour as [increased-contrast light, dark-mode variant].
@@ -156,6 +157,24 @@ export function openUpiApp(pkg: string, qr?: string) {
 export function payInApp(app = preferredApp()) {
   markOpened(addTxn({ amount: 0, payee_name: 'Payment', status: 'PENDING', source: 'app', method: 'upi', app: app.label }));
   openUpiApp(app.pkg);
+}
+
+// The scanned QR redrawn as an image and handed to Android's share sheet: some UPI apps take a shared QR image and open
+// its payment, which a link from a web page can't always do. False if this browser can't share images, or it was cancelled.
+export async function shareQrImage(raw: string, title: string): Promise<boolean> {
+  const img = new Image();
+  img.src = URL.createObjectURL(new Blob([renderSVG(raw, { border: 2 })], { type: 'image/svg+xml' }));
+  try { await img.decode(); } catch { return false; } finally { URL.revokeObjectURL(img.src); }
+  const c = document.createElement('canvas');
+  c.width = c.height = 720;
+  const ctx = c.getContext('2d')!;
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(0, 0, 720, 720);
+  ctx.drawImage(img, 0, 0, 720, 720);
+  const png = await new Promise<Blob | null>((ok) => c.toBlob(ok, 'image/png'));
+  const file = png && new File([png], 'upi-qr.png', { type: 'image/png' });
+  if (!file || !navigator.canShare?.({ files: [file] })) return false;
+  try { await navigator.share({ files: [file], title }); return true; } catch { return false; }
 }
 
 // Share sheet on phones; copies to the clipboard where there is none (most laptops). False if cancelled.
