@@ -7,6 +7,7 @@ import CategoryPicker from '@/components/CategoryPicker';
 import Combobox from '@/components/Combobox';
 import Segmented from '@/components/Segmented';
 import Sheet from '@/components/Sheet';
+import ItemsEditor from '@/components/ItemsEditor';
 import SplitEditor from '@/components/SplitEditor';
 import TripField from '@/components/TripField';
 import { addTxn, tripGroup, type Method } from '@/lib/db';
@@ -174,6 +175,8 @@ export default function PayForm({ qr: q, record = false, draft, onClose }: {
 
       {direction === 'debit' && (
         <>
+          <h3 className="eyebrow">Items</h3>
+          <ItemsEditor split={split} />
           <h3 className="eyebrow">Who pays</h3>
           <SplitEditor split={split} />
         </>

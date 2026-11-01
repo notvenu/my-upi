@@ -255,11 +255,16 @@ export function planImport(rows: StmtRow[]): ImportRow[] {
   return rows.map((r) => {
     const name = payeeFromDesc(r.desc, r.vpa);
     const last = lastPick(r.vpa, name);
-    const base = { ...r, name, note: '', category: last?.category || (r.direction === 'credit' ? 'Transfer' : 'Other'), subcategory: last?.subcategory || null, trip: '' };
+    const base = {
+      ...r, name, note: r.note ?? '', trip: r.trip ?? '',
+      category: r.category || last?.category || (r.direction === 'credit' ? 'Transfer' : 'Other'),
+      subcategory: r.category ? r.subcategory ?? null : last?.subcategory || null,
+    };
     if (isDup(r)) return { ...base, status: 'dup', txnId: null, include: false };
     const fi = fresh.indexOf(r);
     const t = recorded[fi] !== null ? txnById(recorded[fi]!) : undefined;
-    if (t) return { ...base, status: 'match', txnId: t.id, name: t.payee_name || name, note: t.note ?? '', category: t.category, subcategory: t.subcategory, trip: t.trip ?? '', include: true };
+    if (t) return { ...base, status: 'match', txnId: t.id, name: t.payee_name || name,
+      note: r.note || t.note || '', category: r.category || t.category, subcategory: r.category ? base.subcategory : t.subcategory, trip: r.trip || t.trip || '', include: true };
     const twin = imported[left.indexOf(r)];
     return twin !== null ? { ...base, status: 'maybe', txnId: twin, include: false } : { ...base, status: 'new', txnId: null, include: true };
   });
@@ -269,11 +274,9 @@ export function applyImport(plan: ImportRow[]) {
   let matched = 0, added = 0;
   const used = plan.filter((r) => r.status !== 'dup' && r.include);
   for (const r of used) {
-    const t = r.status === 'match' ? txnById(r.txnId!) : undefined;
-    if (t) {
+    const t = r.status === 'match' ? txnById(r.txnId!) : undefined;    if (t) {
       Object.assign(t, { status: 'SUCCESS', stmt_key: r.key, bank_ref: t.bank_ref ?? r.ref ?? null, desc: t.desc ?? r.desc, note: r.note.trim() || null,
-        category: r.category, subcategory: r.subcategory, trip: r.trip.trim() || null });
-      matched++;
+        category: r.category, subcategory: r.subcategory, trip: r.trip.trim() || null });      matched++;
     } else {
       pushTxn({
         amount: r.amount, direction: r.direction, payee_vpa: r.vpa ?? null, payee_name: r.name || null, note: r.note.trim() || null, desc: r.desc,

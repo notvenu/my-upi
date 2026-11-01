@@ -6,6 +6,7 @@ import { toPaise as paise } from './ui';
 // Split state shared by the pay form and the edit sheet (adding a split to an existing payment).
 // Equal mode: everyone (you included) pays the same unless a share is typed.
 // Item mode: each item is for you, everyone, or specific people; whatever isn't itemised is shared by all.
+// Items can be listed with no split at all (just what was bought); "By item" later uses the same list.
 // Fields are changed through set() (or mutated, then changed()), which re-renders the form that owns it.
 export class Split {
   on = false;
@@ -22,7 +23,7 @@ export class Split {
   setMode = (m: 'me' | 'equal' | 'items') =>
     this.set({ on: m !== 'me', byItem: m === 'items', items: m === 'items' && !this.items.length ? [{ name: '', amount: '', who: [] }] : this.items });
 
-  get itemised() { return this.byItem ? this.items.reduce((a, it) => a + paise(it.amount), 0) : 0; }
+  get itemised() { return this.items.reduce((a, it) => a + paise(it.amount), 0); }
   // With items and no amount typed, the items are the bill.
   get total() { return this.base || this.itemised; }
   get active() { return this.on ? this.picked : []; }
@@ -33,12 +34,14 @@ export class Split {
   shareOf = (id: number) =>
     this.byItem ? this.perItem.get(id) ?? 0 : this.shares[id] ? paise(this.shares[id]) : this.equalShare;
   get myShare() { return this.total - this.active.reduce((a, id) => a + this.shareOf(id), 0); }
-  get overItems() { return this.byItem && this.itemised > this.total; }
+  get overItems() { return this.itemised > this.total; }
   addItem = () => this.set({ items: [...this.items, { name: '', amount: '', who: [] }] }); // a new item is for everyone
   rows = () => this.active.map((personId) => ({ personId, amount: this.shareOf(personId) })).filter((r) => r.amount > 0);
   // what's saved on the entry, so the bill can be read back later
-  itemsData = (): Item[] | null =>
-    this.on && this.byItem ? this.items.filter((it) => paise(it.amount)).map((it) => ({ name: it.name.trim() || 'Item', amount: paise(it.amount), who: it.who })) : null;
+  itemsData = (): Item[] | null => {
+    const list = this.items.filter((it) => paise(it.amount)).map((it) => ({ name: it.name.trim() || 'Item', amount: paise(it.amount), who: this.byItem ? it.who : [] }));
+    return list.length ? list : null;
+  };
 }
 
 // items: a scanned bill's lines, ready for "By item". people: a trip's people, so it starts split equally between them.

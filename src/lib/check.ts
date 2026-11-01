@@ -1,7 +1,7 @@
 // Logic self-check: `npm run check`
 import assert from 'node:assert/strict';
 import { cleanAmount, parseUpiQr, personQr, simplePayUri, requestMessage, requestReason, rupees, whenLabel } from './upi.ts';
-import { matchRows, parseDate, parseStatement } from './statement.ts';
+import { matchRows, parseDate, parseStatement, statementCsv } from './statement.ts';
 
 const qr = parseUpiQr('upi://pay?pa=cafe.coffee@okaxis&pn=Cafe%20Coffee&mc=5812&tr=ABC1')!;
 assert.equal(qr.vpa, 'cafe.coffee@okaxis');
@@ -81,6 +81,25 @@ const single = parseStatement([
 ]);
 assert.deepEqual(single.map((r) => r.direction), ['debit', 'credit']);
 
+// optional Category / Subcategory / Reason / Trip columns prefill review; unknown categories are dropped
+const tagged = parseStatement([
+  ['Date', 'Details', 'Ref No', 'Debit', 'Credit', 'Category', 'Subcategory', 'Reason', 'Trip'],
+  ['2026-10-04', 'Paid to Mkr Fuels', '627753131764', '150.00', '', 'fuel', 'Petrol', 'bike', ''],
+  ['2026-10-05', 'Paid to X', '', '10.00', '', 'Snacks', 'Tea', '', 'Goa'],
+]);
+assert.deepEqual([tagged[0].category, tagged[0].subcategory, tagged[0].note, tagged[0].trip], ['Fuel', 'Petrol', 'bike', undefined]);
+assert.deepEqual([tagged[1].category, tagged[1].subcategory, tagged[1].trip], [undefined, undefined, 'Goa']);
+
+// a downloaded statement imports back with the same amounts, sides, refs and labels; failed payments are left out
+const base = { payee_vpa: null, bank_ref: null, subcategory: null, note: null, status: 'SUCCESS' };
+const csv = statementCsv([
+  { ...base, created_at: '2026-10-04T09:30:00', amount: 15000, direction: 'debit', payee_name: 'Mkr Fuels', bank_ref: '627753131764', category: 'Fuel', subcategory: 'Petrol', note: 'bike' },
+  { ...base, created_at: '2026-10-05T18:00:00', amount: 70400, direction: 'credit', payee_name: 'Uday', category: 'Transfer' },
+  { ...base, created_at: '2026-10-06T10:00:00', amount: 5000, direction: 'debit', payee_name: 'X', category: 'Other', status: 'FAILURE' },
+]);
+const back = parseStatement(csv.replace(/^﻿/, '').trim().split('\r\n').map((l) => l.split(',')));
+assert.deepEqual(back.map((r) => [r.date, r.amount, r.direction, r.ref, r.category, r.subcategory, r.note]),
+  [['2026-10-04', 15000, 'debit', '627753131764', 'Fuel', 'Petrol', 'bike'], ['2026-10-05', 70400, 'credit', undefined, 'Transfer', undefined, undefined]]);
 const m = matchRows(rows, [
   { id: 1, amount: 30000, direction: 'debit', date: '2026-10-08', refs: [] }, // ±1 day amount match
   { id: 2, amount: 12000, direction: 'debit', date: '2026-10-01', refs: ['612345678901'] }, // ref match beats date

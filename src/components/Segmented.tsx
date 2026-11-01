@@ -13,11 +13,12 @@ export default function Segmented<T extends string>({ options, value, onChange, 
         <button key={k} role="tab" aria-selected={k === value} onClick={() => { if (k !== value) { haptic(); onChange(k); } }}>{text}</button>
       ))}
       <style jsx>{`
-        .seg { position: relative; display: grid; grid-template-columns: repeat(var(--n), 1fr); background: var(--raised); border-radius: 999px; padding: 3px; }
+        /* minmax(0, …): a long label ("Autopay") can't widen its column past the pill */
+        .seg { position: relative; display: grid; grid-template-columns: repeat(var(--n), minmax(0, 1fr)); background: var(--raised); border-radius: 999px; padding: 3px; }
         .thumb { position: absolute; top: 3px; bottom: 3px; left: 3px; width: calc((100% - 6px) / var(--n)); border-radius: 999px;
           background: #343434; box-shadow: 0 3px 8px rgb(0 0 0 / .35), inset 0 .5px 0 rgb(255 255 255 / .1);
           transform: translateX(calc(var(--i) * 100%)); transition: transform .45s var(--spring); }
-        button { position: relative; min-height: 36px; border-radius: 999px; font-size: 15px; font-weight: 500; letter-spacing: -0.24px; color: var(--ink); transition: opacity .2s; }
+        button { position: relative; min-height: 36px; border-radius: 999px; padding: 0 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 15px; font-weight: 500; letter-spacing: -0.24px; color: var(--ink); transition: opacity .2s; }
         button[aria-selected='false'] { opacity: .65; }
         button:active { opacity: .4; }
       `}</style>

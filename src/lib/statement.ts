@@ -1,3 +1,5 @@
+import { CATEGORIES } from './upi.ts';
+
 export type StmtRow = {
   date: string; // YYYY-MM-DD
   amount: number; // paise
@@ -6,6 +8,7 @@ export type StmtRow = {
   ref?: string; // 12-digit UPI RRN when present
   vpa?: string;
   key: string; // dedupe key across re-imports
+  category?: string; subcategory?: string | null; note?: string; trip?: string; // optional columns, prefilled in review
 };
 
 const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
@@ -63,6 +66,7 @@ export function parseStatement(rows: string[][]): StmtRow[] {
   const cAmt = findCol(h, /amount/, /debit|credit|withdraw|deposit|balance/);
   const cType = findCol(h, /dr\s*\/\s*cr|^type|cr\/dr/);
   const cRef = findCol(h, /ref|chq|cheque/);
+  const cCat = findCol(h, /^category/), cSub = findCol(h, /^sub\s*-?category/), cNote = findCol(h, /^(reason|note)/), cTrip = findCol(h, /^trip/);  const cell = (r: string[], c: number) => (c >= 0 ? String(r[c] ?? '').trim() : '') || undefined;
 
   const out: StmtRow[] = [];
   const key = keyer();
@@ -84,9 +88,31 @@ export function parseStatement(rows: string[][]): StmtRow[] {
     const refDigits = cRef >= 0 ? String(r[cRef]).replace(/\D/g, '') : '';
     const ref = refDigits.length >= 12 ? refDigits.slice(-12) : desc.match(UTR)?.[0];
     const vpa = desc.match(/[\w.]+@[a-z]+/i)?.[0]; // no '-': HDFC uses it as the narration separator
-    out.push({ date, amount, direction, desc, ref, vpa, key: key(`${date}|${direction}|${amount}|${ref ?? desc}`) });
+    const cat = cell(r, cCat)?.toLowerCase();
+    const category = CATEGORIES.find((c) => c.toLowerCase() === cat);
+    out.push({
+      date, amount, direction, desc, ref, vpa, key: key(`${date}|${direction}|${amount}|${ref ?? desc}`),
+      category, subcategory: category && cell(r, cSub), note: cell(r, cNote), trip: cell(r, cTrip),    });
   }
   return out;
+}
+
+type CsvTxn = {
+  created_at: string; amount: number; direction: string; payee_name: string | null; payee_vpa: string | null; status: string;
+  bank_ref: string | null; category: string; subcategory: string | null; note: string | null; trip?: string | null; method?: string | null;
+};
+const csvCell = (v: string) => (/[",\r\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v);
+// A downloadable statement in the same columns the importer reads, so it imports back as-is. Failed payments are left out.
+export function statementCsv(txns: CsvTxn[]): string {
+  const rows = [['Date', 'Time', 'Details', 'Ref No', 'Debit', 'Credit', 'Category', 'Subcategory', 'Reason', 'Trip', 'Method']];
+  for (const t of txns) {
+    if (t.status === 'FAILURE') continue;
+    const amt = (t.amount / 100).toFixed(2), credit = t.direction === 'credit';
+    const who = t.payee_name || t.payee_vpa || 'Payment';
+    rows.push([t.created_at.slice(0, 10), t.created_at.slice(11, 16), `${credit ? 'Received from' : 'Paid to'} ${who}`, t.bank_ref ?? '',
+      credit ? '' : amt, credit ? amt : '', t.category, t.subcategory ?? '', t.note ?? '', t.trip ?? '', t.method ?? '']);
+  }
+  return '﻿' + rows.map((r) => r.map(csvCell).join(',')).join('\r\n') + '\r\n'; // BOM: Excel reads ₹ and names right
 }
 
 // A PDF page as lines of positioned text runs (pdf.ts reads them).

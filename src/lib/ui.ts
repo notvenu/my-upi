@@ -161,9 +161,9 @@ export async function shareText(text: string, url?: string): Promise<'shared' | 
   return 'copied';
 }
 
-export function download(name: string, text: string) {
+export function download(name: string, text: string, type = 'application/json') {
   const a = document.createElement('a');
-  a.href = URL.createObjectURL(new Blob([text], { type: 'application/json' }));
+  a.href = URL.createObjectURL(new Blob([text], { type }));
   a.download = name;
   a.click();
   URL.revokeObjectURL(a.href);

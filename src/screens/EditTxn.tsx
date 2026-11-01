@@ -4,6 +4,7 @@ import { useState } from 'react';
 import BillField from '@/components/BillField';
 import CategoryPicker from '@/components/CategoryPicker';
 import CatIcon from '@/components/CatIcon';
+import ItemsEditor from '@/components/ItemsEditor';
 import Segmented from '@/components/Segmented';
 import Sheet from '@/components/Sheet';
 import SplitEditor from '@/components/SplitEditor';
@@ -31,7 +32,9 @@ export default function EditTxn({ t: initial, onClose }: { t: Txn; onClose: () =
   const [method, setMethod] = useState<Method>(methodOf(t) ?? 'upi');
   const existing = txnSplits(t.id);
   const unasked = existing.filter((x) => x.person_id && !x.paid_at && !x.requested_at).length;
-  const split = useSplit(t.amount);
+  const split = useSplit(t.amount, t.items ?? undefined);
+  // split by item: the items set the shares, so they're shown, not edited. Otherwise items can be listed any time.
+  const itemsLocked = existing.length > 0 && !!t.items?.some((it) => it.who.length);
   // fresh from "did you pay?": nothing filled in yet, so this is the details step
   const [fresh] = useState(() => t.source === 'app' && t.category === 'Other' && !t.note && !existing.length);
   const who = (ids: number[]) =>
@@ -45,7 +48,7 @@ export default function EditTxn({ t: initial, onClose }: { t: Txn; onClose: () =
     const rows = split.rows();
     updateTxn(t.id, {
       category, subcategory, note: note.trim() || null, status, bill_uri: bill, place: place.trim() || null, trip: trip.trim() || null, method,
-      ...(rows.length ? { items: split.itemsData() } : {}),
+      ...(itemsLocked ? {} : { items: split.itemsData() }),
     });
     if (rows.length) addSplits(t.id, rows);
     toast(rows.length ? `Saved · ${rows.length} split${rows.length > 1 ? 's' : ''} added` : 'Saved');
@@ -81,16 +84,18 @@ export default function EditTxn({ t: initial, onClose }: { t: Txn; onClose: () =
 
       {t.direction === 'debit' && (
         <>
+          <h3 className="eyebrow">Items</h3>
+          {itemsLocked ? (
+            <div className="list flush">
+              {t.items!.map((it, i) => (
+                <div key={i} className="item"><span className="grow">{it.name}<br /><span className="sub">{who(it.who)}</span></span><span className="num">{rupees(it.amount)}</span></div>
+              ))}
+            </div>
+          ) : <ItemsEditor split={split} />}
+
           <h3 className="eyebrow">Who pays</h3>
           {existing.length ? (
             <>
-              {t.items?.length ? (
-                <div className="list flush" style={{ marginBottom: 10 }}>
-                  {t.items.map((it, i) => (
-                    <div key={i} className="item"><span className="grow">{it.name}<br /><span className="sub">{who(it.who)}</span></span><span className="num">{rupees(it.amount)}</span></div>
-                  ))}
-                </div>
-              ) : null}
               <div className="list flush">
                 {existing.map((x) => (
                   <div key={x.id} className="item">
