@@ -1,11 +1,11 @@
 'use client';
-import { ArrowUp, ChevronRight, Clock, FileText, FileUp, Luggage, Plus, ReceiptText, Repeat, Send, Smartphone, Sparkles } from 'lucide-react';
+import { ArrowUp, ChevronRight, Clock, FileText, FileUp, Luggage, PiggyBank, Plus, ReceiptText, Repeat, Send, Smartphone, Sparkles } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import Avatar from '@/components/Avatar';
 import NavBar from '@/components/NavBar';
 import TxnRow from '@/components/TxnRow';
 import { ME } from '@/lib/calc';
-import { getSetting, listGroups, listPeople, listSubs, listTrips, monthTxns, toConfirm, unpaidSplits } from '@/lib/db';
+import { db, getSetting, listGroups, listPeople, listSubs, listTrips, monthTxns, toConfirm, unpaidSplits } from '@/lib/db';
 import { openPay, setNav, type Tab } from '@/lib/nav';
 import { readNote } from '@/lib/ocr';
 import { peek, whoFor } from '@/lib/receipt';
@@ -195,6 +195,11 @@ export default function Home({ goTab }: { goTab: (t: Tab) => void }) {
             <button className="item" onClick={() => { setNav({ peopleView: 'trips' }); goTab('people'); }}>
               <span className="mini-icon"><Luggage size={17} /></span>
               <span className="grow"><b className="t">Trips and events</b><br /><span className="sub">{trips.length ? `${trips.slice(0, 2).join(', ')}${trips.length > 2 ? ` +${trips.length - 2}` : ''}` : 'Goa trip, a party: split it all in one place'}</span></span>
+              <ChevronRight size={18} strokeWidth={2.5} className="chev" />
+            </button>
+            <button className="item" onClick={() => setNav({ investing: true })}>
+              <span className="mini-icon"><PiggyBank size={17} /></span>
+              <span className="grow"><b className="t">Investments and savings</b><br /><span className="sub">{db.investments.length ? `Worth ${rupees(db.investments.reduce((a, i) => a + i.value, 0))}` : 'Funds, FDs, stocks, savings goals'}</span></span>
               <ChevronRight size={18} strokeWidth={2.5} className="chev" />
             </button>
             <button className="item" onClick={() => setNav({ subs: true })}>

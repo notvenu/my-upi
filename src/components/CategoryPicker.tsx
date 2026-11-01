@@ -1,6 +1,5 @@
 'use client';
-import { addSubcategory, subcategoriesFor } from '@/lib/db';
-import { CATEGORIES } from '@/lib/upi';
+import { addSubcategory, listCategories, subcategoriesFor } from '@/lib/db';
 import CatIcon from './CatIcon';
 import Combobox from './Combobox';
 
@@ -8,7 +7,7 @@ import Combobox from './Combobox';
 export default function CategoryPicker({ category, subcategory, onChange }: {
   category: string; subcategory: string | null; onChange: (category: string, subcategory: string | null) => void;
 }) {
-  const cats = CATEGORIES.map((c) => ({ value: c as string, label: c }));
+  const cats = [...new Set([...listCategories(), category])].map((c) => ({ value: c, label: c })); // an imported payment can carry a deleted one
   const subs = [{ value: null as string | null, label: 'None' }, ...subcategoriesFor(category).map((s) => ({ value: s as string | null, label: s }))];
   return (
     <div className="pick">

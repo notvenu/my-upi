@@ -1,11 +1,12 @@
 'use client';
-import { ChevronRight, Cloud, CloudOff, Download, FileUp, Repeat, Upload } from 'lucide-react';
+import { ChevronRight, Cloud, CloudOff, Download, FileUp, HandCoins, PiggyBank, Repeat, Tags, Upload } from 'lucide-react';
 import { useRef, useState } from 'react';
 import Avatar from '@/components/Avatar';
 import Combobox from '@/components/Combobox';
 import NavBar from '@/components/NavBar';
 import { db, exportJson, getSetting, importJson, setSetting } from '@/lib/db';
 import { setNav } from '@/lib/nav';
+import { rupees } from '@/lib/upi';
 import { signOut, signOutOthers, supabase, sync } from '@/lib/sync';
 import { ask, download, preferredApp, setPreferredApp, toast, UPI_APPS, vpaError } from '@/lib/ui';
 
@@ -17,6 +18,8 @@ export default function Me() {
   const vpaErr = vpaError(vpa);
   const dirty = name.trim() !== getSetting('my_name') || vpa.trim().toLowerCase() !== getSetting('my_vpa');
   const backupInput = useRef<HTMLInputElement>(null);
+  const owing = db.debts.filter((d) => !d.paid_at).reduce((a, d) => a + d.amount, 0);
+  const worth = db.investments.reduce((a, i) => a + i.value, 0);
 
   function saveMe() {
     if (vpaErr) return;
@@ -93,7 +96,7 @@ export default function Me() {
           </div>
 
           <section>
-            <h2 className="eyebrow">Statements and autopays</h2>
+            <h2 className="eyebrow">Money</h2>
             <div className="list">
               <button className="item" onClick={() => setNav({ importing: true })}>
                 <span className="mini-icon lime"><FileUp size={17} /></span>
@@ -103,6 +106,21 @@ export default function Me() {
               <button className="item" onClick={() => setNav({ subs: true })}>
                 <span className="mini-icon"><Repeat size={17} /></span>
                 <span className="grow">Autopays<br /><span className="sub">Subscriptions, EMIs, mandates</span></span>
+                <ChevronRight size={18} strokeWidth={2.5} className="chev" />
+              </button>
+              <button className="item" onClick={() => setNav({ debts: true })}>
+                <span className="mini-icon"><HandCoins size={17} /></span>
+                <span className="grow">Debts<br /><span className="sub">{owing ? `You owe ${rupees(owing)}` : 'Money you owe someone, to pay later'}</span></span>
+                <ChevronRight size={18} strokeWidth={2.5} className="chev" />
+              </button>
+              <button className="item" onClick={() => setNav({ investing: true })}>
+                <span className="mini-icon lime"><PiggyBank size={17} /></span>
+                <span className="grow">Investments and savings<br /><span className="sub">{worth ? `Worth ${rupees(worth)}` : 'Funds, FDs, stocks, savings goals'}</span></span>
+                <ChevronRight size={18} strokeWidth={2.5} className="chev" />
+              </button>
+              <button className="item" onClick={() => setNav({ categories: true })}>
+                <span className="mini-icon"><Tags size={17} /></span>
+                <span className="grow">Categories<br /><span className="sub">Add, rename or delete categories and subcategories</span></span>
                 <ChevronRight size={18} strokeWidth={2.5} className="chev" />
               </button>
             </div>

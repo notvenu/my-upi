@@ -1,7 +1,7 @@
 import { allocate, findRecurring, nextDue, settleFromCredits, type Every } from './calc';
 import { emit } from './store';
 import { matchRows, methodFromDesc, payeeFromDesc, type StmtRow } from './statement';
-import { SUBCATEGORIES } from './upi';
+import { CATEGORIES, SUBCATEGORIES } from './upi';
 
 // The whole store, kept as one JSON document in localStorage and synced row by row
 // to Supabase when signed in (sync.ts). Every write goes through these functions, which call save().
@@ -36,14 +36,18 @@ export type Group = GroupRow;
 export type Owed = Split & { note: string | null; payee_name: string | null; created_at: string; txn_amount: number; trip: string | null };
 
 // A public split link for a room (people) or a trip; uuid is the link's id.
-export type ShareDef = { id: number; uuid: string; title: string; personIds: number[]; trip: string | null };
+export type ShareDef = { id: number; uuid: string; title: string; personIds: number[]; trip: string | null; groupId?: number };
+// Money you owe someone (a person, shop, landlord…) and will pay later. paid_at: when you marked it paid.
+// Something you've put money into: a fund, FD, stocks, a savings pot. goal: a savings target, if any.
+export type Investment = { id: number; name: string; kind: string; invested: number; value: number; goal: number | null; note: string | null; updated: string };
+export type Debt = { id: number; to: string; amount: number; note: string | null; due: string | null; created_at: string; paid_at: string | null };
 
 export type Store = {
   seq: number; txns: Txn[]; people: PersonRow[]; groups: GroupRow[]; splits: Split[];
-  subcategories: Record<string, string[]>; settings: Record<string, string>; subs: Sub[]; shares: ShareDef[];
+  subcategories: Record<string, string[]>; settings: Record<string, string>; subs: Sub[]; shares: ShareDef[]; debts: Debt[]; investments: Investment[];
 };
 const KEY = 'myupi';
-const empty = (): Store => ({ seq: 0, txns: [], people: [], groups: [], splits: [], subcategories: {}, settings: {}, subs: [], shares: [] });
+const empty = (): Store => ({ seq: 0, txns: [], people: [], groups: [], splits: [], subcategories: {}, settings: {}, subs: [], shares: [], debts: [], investments: [] });
 
 function load(): Store {
   try { return { ...empty(), ...JSON.parse(localStorage.getItem(KEY) ?? '{}') }; } catch { return empty(); }
@@ -162,14 +166,63 @@ export function lastPick(vpa?: string | null, name?: string | null) {
   return t ? { category: t.category, subcategory: t.subcategory } : undefined;
 }
 
-// Defaults, then ones the user added, then any used in history.
+// ── categories ──
+// Every category with its subcategories, in order: the defaults (plus subcategories added the old way) until you
+// edit them, then your edited copy, kept in settings so it syncs.
+// ponytail: icons and colours are keyed by the default names, so a renamed or new category gets the plain one
+export function catMap(): Record<string, string[]> {
+  try { if (db.settings.categories) return JSON.parse(db.settings.categories); } catch { /* fall back to the defaults */ }
+  return Object.fromEntries(CATEGORIES.map((c) => [c, [...new Set([...(SUBCATEGORIES[c] ?? []), ...(db.subcategories[c] ?? [])])]]));
+}
+const saveCats = (m: Record<string, string[]>) => { db.settings.categories = JSON.stringify(m); save(); };
+export const listCategories = () => Object.keys(catMap());
+// Its list, then any used in history.
 export function subcategoriesFor(category: string): string[] {
   const used = db.txns.filter((t) => t.category === category && t.subcategory).map((t) => t.subcategory!);
-  return [...new Set([...(SUBCATEGORIES[category] ?? []), ...(db.subcategories[category] ?? []), ...used])];
+  return [...new Set([...(catMap()[category] ?? []), ...used])];
 }
 export function addSubcategory(category: string, name: string) {
-  const list = (db.subcategories[category] ??= []);
-  if (!list.includes(name.trim())) { list.push(name.trim()); save(); }
+  const m = catMap();
+  const list = (m[category] ??= []);
+  if (!list.includes(name.trim())) { list.push(name.trim()); saveCats(m); }
+}
+export function addCategory(name: string) {
+  const m = catMap();
+  if (!m[name.trim()]) { m[name.trim()] = []; saveCats(m); }
+}
+// Renames it everywhere: payments, autopays, and the list (keeping its place). false if the name is taken.
+export function renameCategory(from: string, to: string): boolean {
+  const m = catMap(), name = to.trim();
+  if (!name || (name !== from && m[name])) return false;
+  for (const t of db.txns) if (t.category === from) t.category = name;
+  for (const x of db.subs) if (x.category === from) x.category = name;
+  saveCats(Object.fromEntries(Object.entries(m).map(([k, v]) => [k === from ? name : k, v])));
+  return true;
+}
+// Its payments and autopays move to Other, which can't be deleted.
+export function deleteCategory(name: string) {
+  if (name === 'Other') return;
+  const m = catMap();
+  delete m[name];
+  m.Other ??= [];
+  for (const t of db.txns) if (t.category === name) { t.category = 'Other'; t.subcategory = null; }
+  for (const x of db.subs) if (x.category === name) x.category = 'Other';
+  saveCats(m);
+}
+export function renameSubcategory(category: string, from: string, to: string): boolean {
+  const m = catMap(), name = to.trim(), list = m[category] ?? [];
+  if (!name || (name !== from && list.includes(name))) return false;
+  m[category] = list.includes(from) ? list.map((x) => (x === from ? name : x)) : [...list, name];
+  for (const t of db.txns) if (t.category === category && t.subcategory === from) t.subcategory = name;
+  saveCats(m);
+  return true;
+}
+// Payments that had it keep their category, with no subcategory.
+export function deleteSubcategory(category: string, name: string) {
+  const m = catMap();
+  m[category] = (m[category] ?? []).filter((x) => x !== name);
+  for (const t of db.txns) if (t.category === category && t.subcategory === name) t.subcategory = null;
+  saveCats(m);
 }
 
 // Most-split-with first, so roommates float to the top of pickers.
@@ -424,4 +477,51 @@ export function addShare(title: string, personIds: number[], trip: string | null
   save();
   return def;
 }
+// A group's own monthly link: made once, then kept in step with the group's name and people.
+export function groupShare(g: Group): ShareDef {
+  let def = db.shares.find((s) => s.groupId === g.id);
+  if (def) Object.assign(def, { title: g.name, personIds: [...g.memberIds] });
+  else db.shares.push(def = { id: nextId(), uuid: crypto.randomUUID(), title: g.name, personIds: [...g.memberIds], trip: null, groupId: g.id });
+  save();
+  return def;
+}
 export function deleteShare(id: number) { db.shares = db.shares.filter((s) => s.id !== id); save(); }
+
+// ── debts: what you owe others ──
+// Unpaid first (soonest due first), then paid, newest first.
+export const listDebts = () => [...db.debts].sort((a, b) =>
+  Number(!!a.paid_at) - Number(!!b.paid_at) || (a.paid_at ? b.paid_at!.localeCompare(a.paid_at) : (a.due ?? '9').localeCompare(b.due ?? '9')));
+export function saveDebt(d: { id?: number; to: string; amount: number; note: string; due: string }) {
+  const row = { to: d.to.trim(), amount: d.amount, note: d.note.trim() || null, due: d.due || null };
+  const existing = d.id ? db.debts.find((x) => x.id === d.id) : undefined;
+  if (existing) Object.assign(existing, row);
+  else db.debts.push({ ...row, id: nextId(), created_at: localIso(), paid_at: null });
+  save();
+}
+export function deleteDebt(id: number) { db.debts = db.debts.filter((d) => d.id !== id); save(); }
+// Paid: logged in History as a payment, so a bank statement later matches it instead of adding it twice.
+export function payDebt(id: number, method: Method) {
+  const d = db.debts.find((x) => x.id === id);
+  if (!d || d.paid_at) return;
+  d.paid_at = localIso();
+  pushTxn({ amount: d.amount, payee_name: d.to, note: d.note || 'Paid back', category: 'Transfer', method, source: 'manual' });
+  save();
+}
+
+// ── investments and savings ──
+export const listInvestments = () => [...db.investments].sort((a, b) => b.value - a.value);
+export function saveInvestment(i: Omit<Investment, 'id' | 'updated'> & { id?: number }) {
+  const row = { ...i, name: i.name.trim(), note: i.note?.trim() || null, updated: localIso() };
+  const existing = i.id ? db.investments.find((x) => x.id === i.id) : undefined;
+  if (existing) Object.assign(existing, row);
+  else db.investments.push({ ...row, id: nextId() });
+  save();
+}
+// Money put in: counts as invested, and its value goes up by the same.
+export function addToInvestment(id: number, amount: number) {
+  const x = db.investments.find((i) => i.id === id);
+  if (!x || amount <= 0) return;
+  Object.assign(x, { invested: x.invested + amount, value: x.value + amount, updated: localIso() });
+  save();
+}
+export function deleteInvestment(id: number) { db.investments = db.investments.filter((i) => i.id !== id); save(); }

@@ -106,6 +106,7 @@ export default function SharePage({ id }: { id: string }) {
                 <p className="eyebrow" style={{ margin: 0 }}>Splits · {period}</p>
                 <h1>{view.title}</h1>
                 <p className="sub">From {view.from.name} · updated {ago(view.updated)}</p>
+                <p className="sub">Shared with {view.people.map((p) => p.name).join(', ')}</p>
               </header>
 
               <section className="people">

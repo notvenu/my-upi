@@ -5,11 +5,11 @@ import NavBar from '@/components/NavBar';
 import Segmented from '@/components/Segmented';
 import TxnRow from '@/components/TxnRow';
 import { MANDATE_RE } from '@/lib/calc';
-import { db, methodOf, type Txn } from '@/lib/db';
+import { db, listCategories, methodOf, type Txn } from '@/lib/db';
 import { setNav } from '@/lib/nav';
 import { statementCsv } from '@/lib/statement';
 import { download, longDate, monthName, spentOf, toast, ymd } from '@/lib/ui';
-import { CATEGORIES, rupees } from '@/lib/upi';
+import { rupees } from '@/lib/upi';
 
 type F = 'all' | 'upi' | 'cash' | 'card' | 'auto';
 const FILTERS: [F, string][] = [['all', 'All'], ['upi', 'UPI'], ['cash', 'Cash'], ['card', 'Card'], ['auto', 'Autopay']];
@@ -56,7 +56,7 @@ export default function History() {
   const more = <T,>(set: (v: T) => void) => (v: T) => { set(v); setLimit(120); };
 
   const months = [...new Set(db.txns.map((t) => t.created_at.slice(0, 7)))].sort().reverse();
-  const cats = CATEGORIES.filter((c) => db.txns.some((t) => t.category === c));
+  const cats = [...new Set([...listCategories(), ...db.txns.map((t) => t.category)])].filter((c) => db.txns.some((t) => t.category === c));
   const s = q.trim().toLowerCase();
   const list = db.txns
     .filter((t) => filter === 'all' || (filter === 'auto' ? isAuto(t) : methodOf(t) === filter))

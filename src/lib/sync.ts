@@ -15,7 +15,7 @@ type SyncState = { email: string | null; since: string | null; checked: boolean;
 export const sync: SyncState = { email: null, since: null, checked: !supabase, status: 'off', error: '' };
 const setSync = (patch: Partial<SyncState>) => { Object.assign(sync, patch); emit(); };
 
-const KINDS = { txn: 'txns', person: 'people', group: 'groups', split: 'splits', sub: 'subs', share: 'shares' } as const;
+const KINDS = { txn: 'txns', person: 'people', group: 'groups', split: 'splits', sub: 'subs', share: 'shares', debt: 'debts', inv: 'investments' } as const;
 type Kind = keyof typeof KINDS | 'meta';
 type Row = { kind: Kind; id: number; data: unknown; deleted: boolean; updated_at?: string };
 
@@ -38,6 +38,7 @@ const dirty = (k: string, local: Map<string, unknown>) =>
 
 // Takes one server row unless this device has an unsent change to it.
 function apply(r: Row, local: Map<string, unknown>) {
+  if (r.kind !== 'meta' && !(r.kind in KINDS)) return; // a kind only a newer version of the app knows
   const k = `${r.kind}:${r.id}`;
   if (dirty(k, local)) return;
   if (r.kind === 'meta') {
@@ -74,7 +75,8 @@ async function push() {
   const local = localRows();
   const up: Row[] = [];
   for (const [k, v] of local) if (dirty(k, local)) up.push({ kind: k.split(':')[0] as Kind, id: Number(k.split(':')[1]), data: v, deleted: false });
-  for (const k of Object.keys(synced)) if (!local.has(k)) up.push({ kind: k.split(':')[0] as Kind, id: Number(k.split(':')[1]), data: null, deleted: true });
+  // snap: keys are split-link snapshots (pushShares), not rows
+  for (const k of Object.keys(synced)) if (!local.has(k) && !k.startsWith('snap:')) up.push({ kind: k.split(':')[0] as Kind, id: Number(k.split(':')[1]), data: null, deleted: true });
   for (let i = 0; i < up.length; i += 500) {
     const { error } = await supabase!.from('rows').upsert(up.slice(i, i + 500), { onConflict: 'user_id,kind,id' });
     if (error) throw error;
@@ -98,6 +100,14 @@ async function pushShares() {
     const { error } = await supabase!.from('shares').upsert({ id: def.uuid, data: view });
     if (error) throw error;
     synced[`snap:${def.uuid}`] = body;
+  }
+  // a deleted link's snapshot is removed, so the link stops working
+  const live = new Set(s.shares.map((d) => `snap:${d.uuid}`));
+  for (const k of Object.keys(synced)) {
+    if (!k.startsWith('snap:') || live.has(k)) continue;
+    const { error } = await supabase!.from('shares').delete().eq('id', k.slice(5));
+    if (error) throw error;
+    delete synced[k];
   }
   saveState();
 }

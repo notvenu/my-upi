@@ -6,10 +6,11 @@ import GroupForm from '@/components/GroupForm';
 import NavBar from '@/components/NavBar';
 import PersonForm from '@/components/PersonForm';
 import Segmented from '@/components/Segmented';
-import { listGroups, listPeople, listTrips, tripInfo, type Group, type Person } from '@/lib/db';
+import { db, listGroups, listPeople, listTrips, tripInfo, type Group, type Person } from '@/lib/db';
 import { nav } from '@/lib/nav';
 import { haptic } from '@/lib/ui';
 import { rupees } from '@/lib/upi';
+import GroupSheet from './GroupSheet';
 import PersonSheet from './PersonSheet';
 import ShareLinks from './ShareLinks';
 import TripSheet from './TripSheet';
@@ -19,7 +20,7 @@ const VIEWS: [View, string][] = [['people', 'People'], ['groups', 'Groups'], ['t
 const ADD = { people: 'Add person', groups: 'New group', trips: 'New trip or event' };
 
 // Three plain lists: people (who owes you), groups you split with every month (Roommates), and trips or events (Goa trip).
-// The + button adds whichever list you're on.
+// The + button adds whichever list you're on. Split links sit on top; a group or trip opens its own sheet.
 export default function People() {
   const [view, setView] = useState<View>(nav.peopleView);
   nav.peopleView = 'people'; // Home's "Trips and events" opens here once
@@ -28,6 +29,7 @@ export default function People() {
   const [editing, setEditing] = useState<Partial<Person> | null>(null);
   const [groupEdit, setGroupEdit] = useState<Partial<Group> | null>(null);
   const [trip, setTrip] = useState<string | null>(null);
+  const [groupId, setGroupId] = useState<number | null>(null);
   const [linksOpen, setLinksOpen] = useState(false);
 
   const people = listPeople();
@@ -39,6 +41,7 @@ export default function People() {
   const owing = people.filter((p) => p.owed > 0);
   const owedTotal = owing.reduce((a, p) => a + p.owed, 0);
   const open = people.find((p) => p.id === openId);
+  const openGroup = groups.find((g) => g.id === groupId);
   const nameOf = (id: number) => people.find((p) => p.id === id)?.name ?? '?';
 
   function add() {
@@ -67,6 +70,12 @@ export default function People() {
               </div>
             </section>
           )}
+          <button className="item card links" onClick={() => { haptic(); setLinksOpen(true); }}>
+            <span className="mini-icon lime"><Link2 size={17} /></span>
+            <span className="grow"><b style={{ fontWeight: 600 }}>Split links</b><br />
+              <span className="sub">{db.shares.length ? `${db.shares.length} link${db.shares.length > 1 ? 's' : ''} · pick people for a new one` : 'Pick people, share one link of who owes what'}</span></span>
+            <ChevronRight size={18} strokeWidth={2.5} className="chev" />
+          </button>
           <Segmented options={VIEWS} value={view} onChange={setView} label="Show" />
           <p className="hint" style={{ marginBottom: 12 }}>
             {view === 'people' ? 'Everyone you split with, and what they owe you.'
@@ -101,11 +110,10 @@ export default function People() {
             <Empty title={q ? 'No one found' : 'Add your people'} text={q ? `Nothing matches "${query}".` : 'Save roommates and friends once with their UPI ID and phone. Then split and ask with a tap.'}
               action={!q ? ADD.people : undefined} onAction={add} />
           )) : view === 'groups' ? (
-            <>
-              {groups.length ? (
+            groups.length ? (
                 <div className="list wide">
                   {groups.map((g) => (
-                    <button key={g.id} className="item" onClick={() => setGroupEdit(g)}>
+                    <button key={g.id} className="item" onClick={() => { haptic(); setGroupId(g.id); }}>
                       <span className="mini-icon" style={{ width: 40, height: 40, borderRadius: 12 }}><Users size={19} /></span>
                       <span className="grow">
                         <span className="ellipsis" style={{ display: 'block', fontWeight: 500 }}>{g.name}</span>
@@ -116,13 +124,7 @@ export default function People() {
                     </button>
                   ))}
                 </div>
-              ) : <Empty title="No groups yet" text="Make Roommates for rent, wifi and groceries, then pick it whenever you split." action={ADD.groups} onAction={add} />}
-              <button className="item card links" onClick={() => setLinksOpen(true)}>
-                <span className="mini-icon lime"><Link2 size={17} /></span>
-                <span className="grow"><b style={{ fontWeight: 600 }}>Split links</b><br /><span className="sub">One link for the room: who owes what this month</span></span>
-                <ChevronRight size={18} strokeWidth={2.5} className="chev" />
-              </button>
-            </>
+              ) : <Empty title="No groups yet" text="Make Roommates for rent, wifi and groceries, then pick it whenever you split." action={ADD.groups} onAction={add} />
           ) : trips.length ? (
             <div className="list wide">
               {trips.map((t) => {
@@ -148,7 +150,13 @@ export default function People() {
 
       {open && <PersonSheet p={open} groups={all} onClose={() => setOpenId(null)} onEdit={() => { setEditing(open); setOpenId(null); }} />}
       {editing && <PersonForm person={editing} onClose={() => setEditing(null)} />}
-      {groupEdit && <GroupForm group={groupEdit} onClose={(name) => { const wasTrip = groupEdit.trip; setGroupEdit(null); if (wasTrip && name) setTrip(name); }} />}
+      {groupEdit && <GroupForm group={groupEdit} onClose={(name) => {
+        const wasTrip = groupEdit.trip;
+        setGroupEdit(null);
+        if (wasTrip && name) setTrip(name);
+        else if (name) setGroupId(listGroups().find((x) => !x.trip && x.name === name)?.id ?? null); // back to its sheet
+      }} />}
+      {openGroup && <GroupSheet key={openGroup.id} g={openGroup} onClose={() => setGroupId(null)} onEdit={() => { setGroupId(null); setGroupEdit(openGroup); }} />}
       {trip && <TripSheet key={trip} name={trip} onClose={() => setTrip(null)} onEdit={() => editTrip(trip)} />}
       {linksOpen && <ShareLinks onClose={() => setLinksOpen(false)} />}
 
@@ -159,7 +167,7 @@ export default function People() {
         .page :global(.stackav) { display: flex; }
         .page :global(.stackav .av) { box-shadow: 0 0 0 2px var(--card); }
         .page :global(.stackav .av + .av) { margin-left: -8px; }
-        .links { margin-top: 14px; padding: 12px 16px; gap: 12px; }
+        .links { width: 100%; margin-bottom: 14px; padding: 12px 16px; gap: 12px; text-align: left; }
         /* UISearchBar, iOS 26 capsule */
         .search { display: flex; align-items: center; gap: 8px; background: var(--raised); border-radius: 999px; padding: 0 14px; min-height: 40px; margin-bottom: 14px; color: var(--sub); }
         .search input { flex: 1; font-size: 17px; padding: 8px 0; color: var(--ink); }

@@ -6,12 +6,15 @@ import { nav, openPay, setNav, type Tab } from '@/lib/nav';
 import { setScrollY, useStore } from '@/lib/store';
 import { startSync, supabase, sync } from '@/lib/sync';
 import { answer, askState, chrome, haptic, pushLayer, takeJustReturned, toast, toastState, ymd } from '@/lib/ui';
+import Categories from './Categories';
 import ConfirmSheet from './ConfirmSheet';
+import Debts from './Debts';
 import EditTxn from './EditTxn';
 import History from './History';
 import Home from './Home';
 import Import from './Import';
 import Insights from './Insights';
+import Investments from './Investments';
 import Login from './Login';
 import Me from './Me';
 import PayForm from './PayForm';
@@ -151,6 +154,9 @@ export default function App() {
           {nav.pay && <PayForm qr={nav.pay.qr} record={nav.pay.record} draft={nav.pay.draft} onClose={(saved) => { setNav({ pay: null }); if (saved) goTab('home'); }} />}
           {nav.importing && <Import onClose={() => setNav({ importing: false })} />}
           {nav.subs && <Subs onClose={() => setNav({ subs: false })} />}
+          {nav.debts && <Debts onClose={() => setNav({ debts: false })} />}
+          {nav.investing && <Investments onClose={() => setNav({ investing: false })} />}
+          {nav.categories && <Categories onClose={() => setNav({ categories: false })} />}
           {nav.confirming && <ConfirmSheet focus={nav.confirmId} onClose={() => setNav({ confirming: false, confirmId: null })} />}
           {nav.editing && <EditTxn key={nav.editing.id} t={nav.editing} onClose={() => setNav({ editing: null })} />}
           {nav.requestFor !== null && <SplitRequestSheet key={nav.requestFor} txnId={nav.requestFor} onClose={() => setNav({ requestFor: null })} />}

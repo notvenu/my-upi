@@ -14,10 +14,10 @@ export type PayDraft = {
 // confirmId: the payment just made in a UPI app, shown first. requestFor: a split payment to offer "request your split now?" for.
 type Nav = {
   tab: Tab; pay: { qr: UpiQr | null; record: boolean; draft?: PayDraft } | null; confirming: boolean; confirmId: number | null; editing: Txn | null;
-  requestFor: number | null; subs: boolean; importing: boolean; scanMode: 'qr' | 'bill'; peopleView: 'people' | 'groups' | 'trips';
+  requestFor: number | null; subs: boolean; debts: boolean; investing: boolean; categories: boolean; importing: boolean; scanMode: 'qr' | 'bill'; peopleView: 'people' | 'groups' | 'trips';
 };
 export const nav: Nav = {
-  tab: 'home', pay: null, confirming: false, confirmId: null, editing: null, requestFor: null, subs: false, importing: false, scanMode: 'qr', peopleView: 'people',
+  tab: 'home', pay: null, confirming: false, confirmId: null, editing: null, requestFor: null, subs: false, debts: false, investing: false, categories: false, importing: false, scanMode: 'qr', peopleView: 'people',
 };
 export const setNav = (patch: Partial<Nav>) => { Object.assign(nav, patch); emit(); };
 // Where a UPI app can't be opened (laptop, iPhone), paying means recording it with its details.

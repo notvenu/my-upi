@@ -13,7 +13,7 @@ export default function ShareLinks({ onClose }: { onClose: () => void }) {
   const people = listPeople();
   const groups = listGroups().filter((g) => g.memberIds.length);
   const nameOf = (id: number) => people.find((p) => p.id === id)?.name.split(' ')[0] ?? '?';
-  const [making, setMaking] = useState(false);
+  const [making, setMaking] = useState(!db.shares.length); // no links yet: straight to making one
   const [title, setTitle] = useState('');
   const [picked, setPicked] = useState<number[]>([]);
   const [trip, setTrip] = useState<string | null>(null);
@@ -53,8 +53,8 @@ export default function ShareLinks({ onClose }: { onClose: () => void }) {
       ) : (
         <>
           <p className="sub" style={{ margin: '0 4px 16px', fontSize: 15 }}>
-            One link for the whole room: the expenses everyone shares equally, each person&apos;s own items, and anything unpaid carried into the next month.
-            It updates as you record and mark people paid.
+            Pick people (or a group) and share one link: what everyone shares, each person&apos;s own items and history, and anything unpaid carried into
+            the next month. It updates as you record and mark people paid. A group&apos;s own link is on its page.
           </p>
           {db.shares.map((s) => (
             <div key={s.id} className="card link">

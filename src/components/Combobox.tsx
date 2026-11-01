@@ -65,7 +65,8 @@ export default function Combobox<T>(props: Props<T>) {
         <ChevronDown size={18} className="faint chev-d" />
       </div>
       {open && (
-        <ul role="listbox" id={id} aria-label={label} aria-multiselectable={props.multiple || undefined}>
+        // keep focus in the input: Safari doesn't focus a tapped button, so the blur would close the list before the tap lands
+        <ul role="listbox" id={id} aria-label={label} aria-multiselectable={props.multiple || undefined} onMouseDown={(e) => e.preventDefault()}>
           {shown.map((o, i) => (
             <li key={String(o.value)} role="option" id={`${id}-${i}`} aria-selected={isSel(o)}>
               <button type="button" tabIndex={-1} className={i === active ? 'active' : ''} onClick={() => pick(o)}>
