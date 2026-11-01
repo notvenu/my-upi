@@ -4,6 +4,7 @@ import {
 } from 'lucide-react';
 import { getSetting, methodOf, setSetting, type Txn } from './db';
 import { emit } from './store';
+import { upiIntent } from './upi';
 
 // Each category: an icon and an iOS system colour as [increased-contrast light, dark-mode variant].
 // The icon square always uses the deep one so the white glyph clears 3:1; bars and text pick per theme.
@@ -147,9 +148,9 @@ export const setPreferredApp = (pkg: string) => setSetting('upi_app', pkg);
 
 // Only Chrome on Android can open another app by its package; on a laptop or iPhone you pay on the phone and record it here.
 export const canOpenApps = /Android/i.test(navigator.userAgent);
-// Opens the app like tapping its icon: no payment is started.
-export function openUpiApp(pkg: string) {
-  location.href = `intent:#Intent;action=android.intent.action.MAIN;category=android.intent.category.LAUNCHER;package=${pkg};end`;
+// Opens that UPI app: on the scanned QR's payment when there is one (amount and note filled in), else on its pay screen.
+export function openUpiApp(pkg: string, qr?: string, amount?: number, note?: string) {
+  location.href = upiIntent(pkg, qr, amount, note);
 }
 
 // Share sheet on phones; copies to the clipboard where there is none (most laptops). False if cancelled.

@@ -1,6 +1,6 @@
 // Logic self-check: `npm run check`
 import assert from 'node:assert/strict';
-import { cleanAmount, parseUpiQr, personQr, simplePayUri, requestMessage, requestReason, rupees, whenLabel } from './upi.ts';
+import { cleanAmount, parseUpiQr, personQr, simplePayUri, upiIntent, requestMessage, requestReason, rupees, whenLabel } from './upi.ts';
 import { matchRows, parseDate, parseStatement, statementCsv } from './statement.ts';
 
 const qr = parseUpiQr('upi://pay?pa=cafe.coffee@okaxis&pn=Cafe%20Coffee&mc=5812&tr=ABC1')!;
@@ -10,6 +10,11 @@ assert.equal(parseUpiQr('https://example.com'), null);
 
 assert.equal(personQr('rahul@okaxis', 'Rahul S').raw, 'upi://pay?pa=rahul@okaxis&pn=Rahul%20S');
 assert.equal(simplePayUri('me@ok', 'Me', 650, 'Dinner, DMart'), 'upi://pay?pa=me@ok&pn=Me&am=650.00&cu=INR&tn=Dinner%2C%20DMart');
+// opening a UPI app from the browser: a scanned QR as scanned, plus the typed amount and note it didn't have
+assert.equal(upiIntent('money.super.payments', 'upi://pay?pa=cafe@okaxis&pn=Cafe%20Coffee&mc=5812&tr=ABC1', 25050, 'Coffee & cake'),
+  'intent://pay?pa=cafe@okaxis&pn=Cafe%20Coffee&mc=5812&tr=ABC1&am=250.50&cu=INR&tn=Coffee%20cake#Intent;scheme=upi;package=money.super.payments;end');
+assert.equal(upiIntent('com.phonepe.app', 'upi://pay?pa=x@ok&am=10.00&cu=INR', 99900), 'intent://pay?pa=x@ok&am=10.00&cu=INR#Intent;scheme=upi;package=com.phonepe.app;end'); // the QR's amount stays
+assert.equal(upiIntent('com.phonepe.app'), 'intent://pay#Intent;scheme=upi;package=com.phonepe.app;end'); // no payee: just open the app
 
 
 assert.equal(requestReason(['Dinner', 'dinner ', 'Groceries']), 'Dinner, dinner, Groceries');
@@ -198,6 +203,10 @@ const goa = buildShare({ title: 'Goa', personIds: [1, 2], trip: 'Goa' },
   { ...roomData, txns: roomData.txns.map((t: object) => ({ ...t, trip: 'Goa' }) as never) }, { name: 'Me', vpa: 'me@ok' }, '2026-11-20T09:00:00');
 assert.equal(room.people[0].history, undefined);
 assert.deepEqual(room.people[0].ledger!.map((m) => m.month), ['2026-11']); // his October milk is paid, so October isn't shown
+// tapping an item: the whole bill, who paid it, and everyone's share (Rahul marked as the one viewing; you paid the rest)
+const veg = room.people[0].ledger![0].items.find((x) => x.what === 'Veggies')!.detail!;
+assert.deepEqual([veg.total, veg.paidBy, veg.shares], [30000, 'Me', [{ name: 'Me', amount: 30000 - 16666 - 6666 }, { name: 'Rahul', amount: 16666, them: true }, { name: 'Priya', amount: 6666 }]]);
+assert.deepEqual(veg.items, [{ name: 'Paneer', amount: 10000, who: ['Rahul'] }, { name: 'Tomatoes', amount: 9000, who: ['Everyone'] }]);
 assert.deepEqual(room.shared.map((l) => [l.what, l.total, l.each, l.paidBy]), [['Rent share', 30000, 10000, [2]], ['Veggies', 20000, 6666, []]]);
 assert.deepEqual(room.people[0].own.map((l) => [l.what, l.amount]), [['Paneer · Veggies', 10000], ['Movie', 10000]]);
 assert.deepEqual(room.people[1].carried, [{ month: '2026-10', amount: 3000 }]); // unpaid October moves into November
@@ -220,6 +229,7 @@ const sheetData = {
   splits: [P(20, 20, 2000, '2026-10-10T10:00:00'), P(21, 21, 3000, '2026-10-25T10:00:00'), P(22, 22, 1000, null), P(23, 23, 4500, null)],
 };
 const sheet = ledger({ id: 4, name: 'Ravi', opening: 500, credit: 1000 }, sheetData, '2026-11-20T09:00:00');
+assert.equal(sheet[0].items[0].category, 'Other'); // each item carries its category, for the link's category view
 assert.deepEqual(sheet.map((m) => [m.month, m.items.map((x) => x.what), m.total, m.old, m.paid.map((x) => [x.what, x.amount]), m.balance]), [
   ['2026-10', ['Milk'], 1000, 500, [], 1500],
   ['2026-11', ['Rent'], 4500, 1500, [['Paid in part', 1000]], 5000],

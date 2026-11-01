@@ -1,5 +1,5 @@
 'use client';
-import { ArrowUp, ChevronRight, Clock, FileText, FileUp, HandCoins, LayoutGrid, Luggage, PiggyBank, Plus, ReceiptText, Repeat, Send, Smartphone, Sparkles } from 'lucide-react';
+import { ArrowUp, ChevronRight, Clock, FileText, FileUp, HandCoins, Luggage, PiggyBank, Plus, ReceiptText, Repeat, Send, Smartphone, Sparkles } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import Avatar from '@/components/Avatar';
 import NavBar from '@/components/NavBar';
@@ -11,7 +11,6 @@ import { readNote } from '@/lib/ocr';
 import { peek, whoFor } from '@/lib/receipt';
 import { canOpenApps, haptic, longDate, preferredApp, shortDate, spentOf, toast, ym, ymd } from '@/lib/ui';
 import { rupees } from '@/lib/upi';
-import MoreMenu from './MoreMenu';
 
 // Type or paste a note in any shape ("tomatoes 70 onions 60 palak 20, palak for me rest for all");
 // Gemini reads it and the payment form opens filled in, so it's confirmed before saving.
@@ -137,7 +136,6 @@ export default function Home({ goTab }: { goTab: (t: Tab) => void }) {
   const app = preferredApp();
   const nextSub = listSubs()[0];
   const trips = listTrips();
-  const [menu, setMenu] = useState(false);
   const debts = db.debts.filter((d) => !d.paid_at);
   const owe = debts.reduce((a, d) => a + d.amount, 0);
   const worth = db.investments.reduce((a, i) => a + i.value, 0);
@@ -224,13 +222,7 @@ export default function Home({ goTab }: { goTab: (t: Tab) => void }) {
               <span className="grow"><b className="t">Autopays</b><br /><span className="sub">{nextSub ? `Next: ${nextSub.name} on ${shortDate(`${nextSub.next}T00:00:00`)}` : 'Subscriptions, EMIs, mandates'}</span></span>
               <ChevronRight size={18} strokeWidth={2.5} className="chev" />
             </button>
-            <button className="item" onClick={() => { haptic(); setMenu(true); }}>
-              <span className="mini-icon"><LayoutGrid size={17} /></span>
-              <span className="grow"><b className="t">More</b><br /><span className="sub">Groups, split links, categories, statements, settings</span></span>
-              <ChevronRight size={18} strokeWidth={2.5} className="chev" />
-            </button>
           </div>
-          {menu && <MoreMenu goTab={goTab} onClose={() => setMenu(false)} />}
         </div>
 
         <section>

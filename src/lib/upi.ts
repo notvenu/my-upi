@@ -47,6 +47,21 @@ export function simplePayUri(vpa: string, name: string, amount: number, note: st
   return `upi://pay?pa=${vpa}&pn=${encodeURIComponent(name)}&am=${amount.toFixed(2)}&cu=INR${tn ? `&tn=${encodeURIComponent(tn)}` : ''}`;
 }
 
+// The link that opens one UPI app (an Android package) from the browser. Chrome marks app links from a web page as
+// browser-started, which an app's home screen won't take, so it opened the Play Store instead; every UPI app takes upi://pay.
+// With a scanned QR (raw), the app opens on that payment, the QR's own fields kept as scanned (merchant signatures stay valid);
+// a typed amount (paise) and note fill in only what the QR didn't say. Without one, the app opens on its pay screen.
+export function upiIntent(pkg: string, raw?: string, amount?: number, note?: string): string {
+  let qs = raw?.includes('?') ? raw.slice(raw.indexOf('?')) : '';
+  const has = (k: string) => new RegExp(`[?&]${k}=`, 'i').test(qs);
+  const add = (k: string, v: string) => { qs += `${qs ? '&' : '?'}${k}=${v}`; };
+  if (qs && amount && !has('am')) add('am', (amount / 100).toFixed(2));
+  if (qs && !has('cu')) add('cu', 'INR');
+  const tn = note?.replace(/[^A-Za-z0-9 ,]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 50);
+  if (qs && tn && !has('tn')) add('tn', encodeURIComponent(tn));
+  return `intent://pay${qs}#Intent;scheme=upi;package=${pkg};end`;
+}
+
 // The note UPI apps show on the payment screen ("tn"): the reasons, squeezed into ~50 chars since apps truncate.
 export function requestReason(reasons: string[]): string {
   const uniq = [...new Set(reasons.map((r) => r.trim()).filter(Boolean))];

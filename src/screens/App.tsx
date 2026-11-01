@@ -1,5 +1,5 @@
 'use client';
-import { ChartPie, CircleCheck, History as HistoryIcon, House, ScanLine, UserRound, Users } from 'lucide-react';
+import { ChartPie, CircleCheck, History as HistoryIcon, House, LayoutGrid, ScanLine, UserRound, Users } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { getSetting, logDueSubs, rematchRepayments, setSetting, toConfirm } from '@/lib/db';
 import { nav, openPay, setNav, type Tab } from '@/lib/nav';
@@ -17,6 +17,7 @@ import Insights from './Insights';
 import Investments from './Investments';
 import Login from './Login';
 import Me from './Me';
+import MoreMenu from './MoreMenu';
 import PayForm from './PayForm';
 import People from './People';
 import Scan from './Scan';
@@ -40,6 +41,7 @@ export default function App() {
   const releaseTab = useRef<(() => void) | null>(null);
   const restore = useRef<Tab | null>(null);
   const lensAt = TABS.findIndex((t) => t.key === nav.tab);
+  const [more, setMore] = useState(false); // the More button opens a menu of every page, it isn't a tab
 
   // Back from any other tab returns Home (one history entry while away from Home); Back on Home leaves the app.
   function goTab(t: Tab) {
@@ -102,7 +104,7 @@ export default function App() {
     if (!askState.q && d?.open) d.close();
   });
 
-  // Laptop shortcuts, when not typing and nothing is open: 1–5 tabs, S scan, N new entry, H history, A autopays, I import a statement.
+  // Laptop shortcuts, when not typing and nothing is open: 1–5 tabs, S scan, N new entry, H history, A autopays, I import a statement, M more.
   useEffect(() => {
     const shortcut = (e: KeyboardEvent) => {
       if (e.ctrlKey || e.metaKey || e.altKey || chrome.sheets || askState.q || !sync.checked || (supabase && !sync.email)) return;
@@ -113,6 +115,7 @@ export default function App() {
       else if (k === 'n') openPay(null, true);
       else if (k === 'a') setNav({ subs: true });
       else if (k === 'i') setNav({ importing: true });
+      else if (k === 'm') setMore(true);
       else return;
       e.preventDefault();
     };
@@ -139,7 +142,7 @@ export default function App() {
 
             {/* iOS 26 tab bar: a floating glass capsule with a lens that slides to the open tab, and Scan as its own button; a sidebar on a laptop */}
             <nav aria-label="Main">
-              <div className="capsule glass" style={{ ['--i' as string]: lensAt, ['--n' as string]: TABS.length }}>
+              <div className="capsule glass" style={{ ['--i' as string]: lensAt, ['--n' as string]: TABS.length + 1 }}>
                 <span className={`lens${lensAt < 0 ? ' hidden' : ''}`} />
                 {TABS.map((t, i) => {
                   const Icon = t.icon;
@@ -151,6 +154,10 @@ export default function App() {
                     </button>
                   );
                 })}
+                <button className="tab" title="More (M)" aria-haspopup="dialog" aria-expanded={more} onClick={() => { haptic(); setMore(true); }}>
+                  <span className="ic"><LayoutGrid size={23} strokeWidth={1.9} /></span>
+                  <span className="lbl">More</span>
+                </button>
               </div>
               <button className={`scan-btn${nav.tab === 'scan' ? ' on' : ''}`} aria-label="Scan and pay" title="Scan and pay (S)"
                 aria-current={nav.tab === 'scan' ? 'page' : undefined} onClick={() => goTab('scan')}>
@@ -159,6 +166,7 @@ export default function App() {
             </nav>
           </div>
 
+          {more && <MoreMenu goTab={goTab} onClose={() => setMore(false)} />}
           {nav.pay && <PayForm qr={nav.pay.qr} record={nav.pay.record} draft={nav.pay.draft} onClose={(saved) => { setNav({ pay: null }); if (saved) goTab('home'); }} />}
           {nav.importing && <Import onClose={() => setNav({ importing: false })} />}
           {nav.subs && <Subs onClose={() => setNav({ subs: false })} />}
@@ -219,6 +227,12 @@ export default function App() {
         .scan-btn:active { transform: scale(.88); transition-duration: .1s; }
         .scan-btn.on { box-shadow: inset 0 1px 0 rgb(255 255 255 / .6), 0 0 0 3px var(--bg), 0 0 0 5px var(--lime); }
         .scan-lbl { display: none; }
+        /* six buttons on a narrow phone: a little tighter so the labels never touch */
+        @media (max-width: 380px) {
+          nav { padding-left: 10px; padding-right: 10px; gap: 8px; }
+          .scan-btn { width: 56px; height: 56px; }
+          .tab { font-size: 9.5px; letter-spacing: -0.2px; }
+        }
 
         /* laptop: the tab bar becomes a sidebar, sheets stop pushing the page back */
         @media (min-width: 900px) {

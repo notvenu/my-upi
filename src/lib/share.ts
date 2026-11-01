@@ -9,10 +9,19 @@ export type OwnLine = { date: string; what: string; amount: number; paid: boolea
 export type HistoryLine = {
   date: string; what: string; payee: string | null; category: string; place: string | null; trip: string | null;
   total: number; share: number; paid: boolean; with: string[]; items: { name: string; amount: number; who: string[] }[];
+  detail?: Detail;
 };
 // A room link's month-by-month sheet for one person, like a roommates' spreadsheet: that month's unpaid items (their
 // share), the total, what was carried in from before, money off (amounts are positive; shown as minus), and the balance carried on.
-export type LedgerLine = { date: string; what: string; amount: number };
+// Everything about one payment, for tapping an item on the link: when, who it was paid to and how, the whole bill,
+// everyone's share (you paid the bill, so your share is what's left), and the bill's items.
+export type Detail = {
+  time: string; payee: string | null; paidBy: string; method: string | null; total: number; note: string | null;
+  category: string; sub: string | null; place: string | null; trip: string | null;
+  shares: { name: string; amount: number; them?: boolean }[]; items: { name: string; amount: number; who: string[] }[];
+};
+// category and detail: items only (older snapshots lack them)
+export type LedgerLine = { date: string; what: string; amount: number; category?: string; detail?: Detail };
 export type LedgerMonth = { month: string; items: LedgerLine[]; total: number; old: number; paid: LedgerLine[]; balance: number };
 export type SharePerson = {
   id: number; name: string; due: number; paid: number; carried: { month: string; amount: number }[]; own: OwnLine[];
@@ -32,6 +41,11 @@ type Data = { txns: Txn[]; splits: Split[]; people: { id: number; name: string; 
 type LedgerPerson = Data['people'][number];
 
 const whatOf = (t: Txn) => t.note || t.payee_name || t.subcategory || t.category;
+// how the bill was paid: the UPI app's name when known
+const methodName = (t: Txn) => {
+  const m = t.method ?? (t.payee_vpa || t.source === 'app' ? 'upi' : null);
+  return m === 'upi' ? t.app || 'UPI' : m === 'cash' ? 'Cash' : m === 'card' ? 'Card' : m === 'bank' ? 'Bank transfer' : null;
+};
 
 export function buildShare(
   def: { title: string; personIds: number[]; trip: string | null; until?: string | null }, d: Data, me: { name: string; vpa: string }, now: string,
@@ -79,6 +93,16 @@ export function buildShare(
   const first = (n: string) => n.trim().split(/\s+/)[0] || '?';
   const owner = first(me.name || 'Payer');
   const nameOf = (id: number | null, snapshot = '') => (id === 0 ? owner : first(d.people.find((p) => p.id === id)?.name ?? snapshot));
+  const detailOf = (t: Txn, pid: number): Detail => {
+    const all = d.splits.filter((x) => x.txn_id === t.id);
+    return {
+      time: t.created_at, payee: t.payee_name, paidBy: owner, method: methodName(t), total: t.amount, note: t.note && t.note !== whatOf(t) ? t.note : null,
+      category: t.category, sub: t.subcategory, place: t.place ?? null, trip: t.trip ?? null,
+      shares: [{ name: owner, amount: Math.max(0, t.amount - all.reduce((a, x) => a + x.amount, 0)) },
+        ...all.map((x) => ({ name: nameOf(x.person_id, x.name), amount: x.amount, ...(x.person_id === pid ? { them: true } : {}) }))],
+      items: (t.items ?? []).map((it) => ({ name: it.name, amount: it.amount, who: it.who.length ? it.who.map((id) => nameOf(id)) : ['Everyone'] })),
+    };
+  };
   const history = (pid: number): HistoryLine[] => mine
     .filter((s) => s.person_id === pid && !s.paid_at && (!def.trip || txnById.get(s.txn_id)!.trip === def.trip))
     .map((s) => {
@@ -88,6 +112,7 @@ export function buildShare(
         date: t.created_at.slice(0, 10), what: whatOf(t), payee: t.payee_name, category: t.category, place: t.place ?? null, trip: t.trip ?? null,
         total: t.amount, share: s.amount, paid: !!s.paid_at, with: [owner, ...others],
         items: (t.items ?? []).map((it) => ({ name: it.name, amount: it.amount, who: it.who.length ? it.who.map((id) => nameOf(id)) : ['Everyone'] })),
+        detail: detailOf(t, pid),
       };
     })
     .sort((a, b) => b.date.localeCompare(a.date));
@@ -107,7 +132,7 @@ export function buildShare(
         due: Math.max(0, sum(now_.filter((s) => !s.paid_at)) + sum(before) + opening - partPaid - oweBack), paid: sum(now_.filter((s) => s.paid_at)),
         carried: months.map((m) => ({ month: m, amount: sum(before.filter((s) => txnById.get(s.txn_id)!.created_at.startsWith(m))) })),
         own: own.get(p.id)!.sort((a, b) => a.date.localeCompare(b.date)),
-        ...(month ? { ledger: ledger(p, d, now) } : { history: history(p.id) }),
+        ...(month ? { ledger: ledger(p, d, now, (t) => detailOf(t, p.id)) } : { history: history(p.id) }),
       };
     }),
   };
@@ -115,7 +140,7 @@ export function buildShare(
 
 // Builds the month sheet from what's still unpaid: each month's open splits, their previous balance carried into the
 // first month, and what comes off (a part payment, money they gave you) on the last, so the last balance is what they owe.
-export function ledger(p: LedgerPerson, d: Data, now: string): LedgerMonth[] {
+export function ledger(p: LedgerPerson, d: Data, now: string, detail?: (t: Txn) => Detail): LedgerMonth[] {
   const ok = new Map(d.txns.filter((t) => t.status !== 'FAILURE').map((t) => [t.id, t]));
   const open = d.splits.filter((s) => s.person_id === p.id && !s.paid_at && ok.has(s.txn_id));
   const mOf = (iso: string) => iso.slice(0, 7);
@@ -129,7 +154,7 @@ export function ledger(p: LedgerPerson, d: Data, now: string): LedgerMonth[] {
   let balance = p.opening ?? 0;
   return months.map((m, i) => {
     const items = open.filter((s) => mOf(ok.get(s.txn_id)!.created_at) === m)
-      .map((s) => { const t = ok.get(s.txn_id)!; return { date: t.created_at.slice(0, 10), what: whatOf(t), amount: s.amount }; })
+      .map((s) => { const t = ok.get(s.txn_id)!; return { date: t.created_at.slice(0, 10), what: whatOf(t), amount: s.amount, category: t.category, ...(detail ? { detail: detail(t) } : {}) }; })
       .sort((a, b) => a.date.localeCompare(b.date));
     const paid = i === months.length - 1 ? off : [];
     const old = balance;
