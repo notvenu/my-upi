@@ -63,7 +63,7 @@ export default function PayForm({ qr: q, record = false, draft, onClose }: {
     setPreferredApp(app.pkg);
     markOpened(id);
     onClose(true);
-    openUpiApp(app.pkg, q?.raw);
+    openUpiApp(app.pkg);
   }
 
   const entry = () => ({
@@ -77,7 +77,7 @@ export default function PayForm({ qr: q, record = false, draft, onClose }: {
     setPreferredApp(app.pkg);
     markOpened(id);
     onClose(true);
-    openUpiApp(app.pkg, q?.raw, split.total, note);
+    openUpiApp(app.pkg);
   }
   const payAfter = canOpenApps && direction === 'debit' && method === 'upi';
 

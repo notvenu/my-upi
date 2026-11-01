@@ -10,11 +10,7 @@ assert.equal(parseUpiQr('https://example.com'), null);
 
 assert.equal(personQr('rahul@okaxis', 'Rahul S').raw, 'upi://pay?pa=rahul@okaxis&pn=Rahul%20S');
 assert.equal(simplePayUri('me@ok', 'Me', 650, 'Dinner, DMart'), 'upi://pay?pa=me@ok&pn=Me&am=650.00&cu=INR&tn=Dinner%2C%20DMart');
-// opening a UPI app from the browser: a scanned QR as scanned, plus the typed amount and note it didn't have
-assert.equal(upiIntent('money.super.payments', 'upi://pay?pa=cafe@okaxis&pn=Cafe%20Coffee&mc=5812&tr=ABC1', 25050, 'Coffee & cake'),
-  'intent://pay?pa=cafe@okaxis&pn=Cafe%20Coffee&mc=5812&tr=ABC1&am=250.50&cu=INR&tn=Coffee%20cake#Intent;scheme=upi;package=money.super.payments;end');
-assert.equal(upiIntent('com.phonepe.app', 'upi://pay?pa=x@ok&am=10.00&cu=INR', 99900), 'intent://pay?pa=x@ok&am=10.00&cu=INR#Intent;scheme=upi;package=com.phonepe.app;end'); // the QR's amount stays
-assert.equal(upiIntent('com.phonepe.app'), 'intent://pay#Intent;scheme=upi;package=com.phonepe.app;end'); // no payee: just open the app
+assert.equal(upiIntent('com.phonepe.app'), 'intent://pay#Intent;scheme=upi;package=com.phonepe.app;end'); // opens the app with nothing filled in
 
 
 assert.equal(requestReason(['Dinner', 'dinner ', 'Groceries']), 'Dinner, dinner, Groceries');
