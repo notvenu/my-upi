@@ -9,7 +9,7 @@ import { db, getSetting, listGroups, listPeople, listSubs, listTrips, monthTxns,
 import { openPay, setNav, type Tab } from '@/lib/nav';
 import { readNote } from '@/lib/ocr';
 import { peek, whoFor } from '@/lib/receipt';
-import { canOpenApps, haptic, longDate, preferredApp, shortDate, spentOf, toast, ym, ymd } from '@/lib/ui';
+import { canOpenApps, haptic, longDate, payInApp, preferredApp, shortDate, spentOf, toast, ym, ymd } from '@/lib/ui';
 import { rupees } from '@/lib/upi';
 
 // Type or paste a note in any shape ("tomatoes 70 onions 60 palak 20, palak for me rest for all");
@@ -164,7 +164,7 @@ export default function Home({ goTab }: { goTab: (t: Tab) => void }) {
             <button className="action main" onClick={() => { haptic(); openPay(null, true); }}><Plus size={22} strokeWidth={2.4} /><span>Add payment</span></button>
             <button className="action" onClick={() => { haptic(); setNav({ scanMode: 'bill' }); goTab('scan'); }}><ReceiptText size={22} /><span>Scan bill</span></button>
             <button className="action" onClick={() => { haptic(); setNav({ importing: true }); }}><FileUp size={22} /><span>Statement</span></button>
-            {canOpenApps && <button className="action" onClick={() => { haptic(); openPay(null); }}><Smartphone size={22} /><span>Open {app.label}</span></button>}
+            {canOpenApps && <button className="action" onClick={() => { haptic(); payInApp(app); }}><Smartphone size={22} /><span>Open {app.label}</span></button>}
           </div>
           <QuickNote />
 

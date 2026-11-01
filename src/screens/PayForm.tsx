@@ -25,7 +25,7 @@ export default function PayForm({ qr: q, record = false, draft, onClose }: {
   qr: UpiQr | null; record?: boolean; draft?: PayDraft; onClose: (saved: boolean) => void;
 }) {
   const [mode, setMode] = useState<'pay' | 'record'>(record ? 'record' : 'pay');
-  const [amount, setAmount] = useState(draft?.amount ? String(draft.amount / 100) : '');
+  const [amount, setAmount] = useState(draft?.amount ? String(draft.amount / 100) : q?.amount ? String(q.amount) : ''); // a QR with an amount fills it in
   const [payee, setPayee] = useState(q?.name ?? draft?.payee ?? '');
   const [direction, setDirection] = useState<'debit' | 'credit'>('debit');
   const [method, setMethod] = useState<Method>(draft?.method ?? (record && !q && !draft ? 'cash' : 'upi'));
@@ -59,7 +59,7 @@ export default function PayForm({ qr: q, record = false, draft, onClose }: {
 
   // Saved as unconfirmed, then the UPI app opens like tapping its icon. Coming back asks "did you pay?" and the details.
   function pay() {
-    const id = addTxn({ amount: 0, payee_vpa: q?.vpa ?? null, payee_name: name || 'Payment', status: 'PENDING', source: 'app', method: 'upi', app: app.label });
+    const id = addTxn({ amount: q?.amount ? toPaise(String(q.amount)) : 0, payee_vpa: q?.vpa ?? null, payee_name: name || 'Payment', status: 'PENDING', source: 'app', method: 'upi', app: app.label });
     setPreferredApp(app.pkg);
     markOpened(id);
     onClose(true);

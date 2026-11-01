@@ -2,7 +2,7 @@ import {
   Circle, Coffee, Droplet, FileText, Film, Heart, House, Map, Navigation, Repeat, ShoppingBag, ShoppingCart,
   type LucideIcon,
 } from 'lucide-react';
-import { getSetting, methodOf, setSetting, type Txn } from './db';
+import { addTxn, getSetting, methodOf, setSetting, type Txn } from './db';
 import { emit } from './store';
 import { upiIntent } from './upi';
 
@@ -151,6 +151,11 @@ export const canOpenApps = /Android/i.test(navigator.userAgent);
 // Opens that UPI app with nothing filled in; you scan and pay there.
 export function openUpiApp(pkg: string) {
   location.href = upiIntent(pkg);
+}
+// Pay in your UPI app: logged here as unconfirmed, then the app opens. Back here, "did you pay?" asks the amount and details.
+export function payInApp(app = preferredApp()) {
+  markOpened(addTxn({ amount: 0, payee_name: 'Payment', status: 'PENDING', source: 'app', method: 'upi', app: app.label }));
+  openUpiApp(app.pkg);
 }
 
 // Share sheet on phones; copies to the clipboard where there is none (most laptops). False if cancelled.
