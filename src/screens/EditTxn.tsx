@@ -11,7 +11,7 @@ import Sheet from '@/components/Sheet';
 import SplitEditor from '@/components/SplitEditor';
 import TripField from '@/components/TripField';
 import { ME } from '@/lib/calc';
-import { addSplits, db, deleteTxn, linkReceived, listPeople, methodOf, replaceSplits, txnSplits, updateTxn, type Method, type Txn } from '@/lib/db';
+import { addSplits, db, deleteTxn, linkReceived, listPeople, markSplits, methodOf, replaceSplits, txnSplits, updateTxn, type Method, type Split, type Txn } from '@/lib/db';
 import { setNav } from '@/lib/nav';
 import { useSplit } from '@/lib/split';
 import { ask, removeBill, toast, toPaise } from '@/lib/ui';
@@ -86,6 +86,12 @@ export default function EditTxn({ t: initial, onClose }: { t: Txn; onClose: () =
     const fresh = txnSplits(t.id).some((x) => x.person_id && !x.paid_at && !x.requested_at);
     if (rows.length && fresh && status !== 'FAILURE') setNav({ requestFor: t.id });
   }
+  async function markPaid(x: Split) {
+    const first = x.name.split(' ')[0];
+    if (!(await ask(`Did ${first} pay you ${rupees(x.amount)}?`, 'Only their share of this payment is marked settled.', 'Yes, paid'))) return;
+    markSplits([x.id], 'paid_at');
+    toast(`${first}'s share marked paid`);
+  }
   async function remove() {
     if (!(await ask('Delete this entry?', "Its splits and bill photo are deleted too. This can't be undone.", 'Delete', true))) return;
     removeBill(bill); removeBill(t.bill_uri); deleteTxn(t.id);
@@ -151,11 +157,11 @@ export default function EditTxn({ t: initial, onClose }: { t: Txn; onClose: () =
             <>
               <div className="list flush">
                 {existing.map((x) => (
-                  <div key={x.id} className="item">
+                  <button key={x.id} className="item" disabled={!!x.paid_at} onClick={() => markPaid(x)}>
                     <span className="grow">{x.name}</span>
-                    <span className="sub">{x.paid_at ? 'Paid' : x.requested_at ? 'Requested' : 'Not requested'}</span>
+                    <span className="sub">{x.paid_at ? 'Paid' : x.requested_at ? 'Requested · tap if paid' : 'Not requested · tap if paid'}</span>
                     <span className="num">{rupees(x.amount)}</span>
-                  </div>
+                  </button>
                 ))}
               </div>
               <div className="stack" style={{ marginTop: 10, gap: 4 }}>
