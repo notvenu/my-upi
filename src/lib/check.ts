@@ -386,3 +386,58 @@ import { mccCategory } from './upi.ts';
   assert.equal(payees(moved, '2026-11-04')[0].category, 'Bills');
 }
 console.log('learn + qr checks passed');
+
+// generic shop QRs, budgets, nudges, quick add, UPI receipts
+import { nudges, parseQuick, safeToSpend, suggestBudgets } from './learn.ts';
+import { genericName } from './upi.ts';
+import { parseUpiReceipt } from './receipt.ts';
+{
+  const pp = parseUpiQr('upi://pay?pa=Q12345@ybl&pn=PhonePeMerchant&mc=0000&tn=Pay%20to%20PhonePeMerchant')!;
+  assert.ok(genericName(pp.name, pp.vpa));
+  assert.equal(pp.note, undefined); // filler note dropped
+  assert.ok(genericName('BharatPe Merchant') && genericName('Paytm Merchant') && genericName('9876543210') && genericName('x@ybl', 'x@ybl'));
+  assert.ok(!genericName('Ravi Kirana') && !genericName('Merchant of Venice Cafe'));
+  assert.equal(parseUpiQr('upi://pay?pa=s@ybl&pn=Shop&tn=Table%204')!.note, 'Table 4');
+
+  const T = (name: string | null, vpa: string | null, category: string, date: string, amount = 10000) =>
+    ({ payee_name: name, payee_vpa: vpa, category, subcategory: null, note: null, amount, direction: 'debit' as const, status: 'SUCCESS', created_at: `${date}T10:00:00`, method: 'upi' as const, place: null });
+  // a shop first saved as "PhonePeMerchant", then named: the name sticks to its UPI ID
+  const shop = [T('Ravi Tea Stall', 'q1@ybl', 'Food', '2026-11-02', 2000), T('PhonePeMerchant', 'q1@ybl', 'Food', '2026-11-01', 2000)];
+  const ps = payees(shop, '2026-11-04');
+  assert.deepEqual([ps[0].name, ps[0].count, ps[0].named], ['Ravi Tea Stall', 2, true]);
+  assert.equal(guess(shop, '2026-11-04', { vpa: 'q1@ybl', name: 'PhonePeMerchant' })!.payee!.name, 'Ravi Tea Stall');
+  assert.equal(guess(shop, '2026-11-04', { vpa: 'q9@ybl', name: 'PhonePeMerchant' }), null); // a different shop with the same filler name isn't them
+
+  // budgets: usual month = median of the last three
+  const hist = [
+    ...['2026-08', '2026-09', '2026-10'].map((m, i) => T('Swiggy', 's@ybl', 'Food', `${m}-10`, [4000_00, 5000_00, 6000_00][i])),
+    T('Swiggy', 's@ybl', 'Food', '2026-11-02', 3000_00), T('Swiggy', 's@ybl', 'Food', '2026-11-08', 1600_00),
+  ];
+  assert.deepEqual(suggestBudgets(hist, '2026-11-10'), { Food: 5000_00 });
+  const s = safeToSpend({ Food: 5000_00 }, hist, '2026-11-10');
+  assert.deepEqual([s.spent, s.left, s.daysLeft, s.perDay], [4600_00, 400_00, 21, 19_00]);
+  assert.ok(nudges(hist, '2026-11-10', { Food: 5000_00 }).some((n) => n.key === 'b:2026-11:Food'));
+  assert.ok(nudges(hist, '2026-11-10').some((n) => n.key === 'c:2026-11:Food')); // no budget: on pace for more than usual
+  // a subscription that went up, an unusual amount
+  const subs = ['2026-07', '2026-08', '2026-09', '2026-10'].map((m) => T('Netflix', 'nf@icici', 'Entertainment', `${m}-05`, 199_00));
+  assert.ok(nudges([...subs, T('Netflix', 'nf@icici', 'Entertainment', '2026-11-05', 249_00)], '2026-11-06').some((n) => n.text === 'Netflix went from ₹199 to ₹249'));
+  const tea = [1, 2, 3, 4].map((d) => T('Chai', 'c@ybl', 'Food', `2026-10-0${d}`, 20_00));
+  assert.ok(nudges([...tea, T('Chai', 'c@ybl', 'Food', '2026-11-03', 2400_00)], '2026-11-04').some((n) => n.key.startsWith('u:')));
+
+  // quick add
+  const people = [{ id: 1, name: 'Rahul Sharma' }, { id: 2, name: 'Priya' }];
+  assert.deepEqual(parseQuick('120 chai split rahul', people, [{ name: 'Chai Point' }]), { amount: 120_00, payee: 'Chai Point', note: '', method: null, people: [1] });
+  assert.deepEqual(parseQuick('uber 250 cash', people, []), { amount: 250_00, payee: 'Uber', note: '', method: 'cash', people: [] });
+  assert.deepEqual(parseQuick('1.2k dinner at Toit with priya and rahul', people, [{ name: 'Toit' }]), { amount: 1200_00, payee: 'Toit', note: 'dinner at', method: null, people: [2, 1] });
+  assert.equal(parseQuick('just words', people, []), null);
+
+  // receipts shared from UPI apps
+  const pe = parseUpiReceipt('Transaction Successful\n10:42 am on 04 Nov 2026\nPaid to\nSWIGGY\nswiggy@ybl\n₹245\nTransaction ID\nT2611041042123\nUTR: 612345678901')!;
+  assert.deepEqual(pe, { amount: 245_00, payee: 'SWIGGY', vpa: 'swiggy@ybl', ref: '612345678901', date: '2026-11-04', direction: 'debit' });
+  const gp = parseUpiReceipt('₹1,250.00\nCompleted\n3 Nov 2026, 8:15 pm\nUPI transaction ID\n612399998888\nTo: Ravi Kirana\nravi@okaxis\nFrom: ME (Bank 1234)')!;
+  assert.deepEqual([gp.amount, gp.payee, gp.ref, gp.date], [1250_00, 'Ravi Kirana', '612399998888', '2026-11-03']);
+  const pt = parseUpiReceipt('Received from Rahul\nRs. 500\nUPI Ref No: 612311112222')!;
+  assert.deepEqual([pt.direction, pt.payee, pt.amount], ['credit', 'Rahul', 500_00]);
+  assert.equal(parseUpiReceipt('hello'), null);
+}
+console.log('budget + nudge + quick + receipt checks passed');

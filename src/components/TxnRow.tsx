@@ -1,15 +1,17 @@
 import { Paperclip } from 'lucide-react';
-import type { Txn } from '@/lib/db';
+import { nameForVpa, type Txn } from '@/lib/db';
 import { methodLabel, shortDate, statusWord, time12 } from '@/lib/ui';
-import { rupees } from '@/lib/upi';
+import { genericName, rupees } from '@/lib/upi';
 import CatIcon from './CatIcon';
 
 export default function TxnRow({ t, onClick, showDate = false }: { t: Txn; onClick: () => void; showDate?: boolean }) {
-  const title = t.note || t.payee_name || t.payee_vpa || t.subcategory || t.category;
+  // saved as "PhonePeMerchant" before you named that shop: show the name you gave it since
+  const payee = t.payee_vpa && genericName(t.payee_name, t.payee_vpa) ? nameForVpa(t.payee_vpa) || t.payee_name : t.payee_name;
+  const title = t.note || payee || t.payee_vpa || t.subcategory || t.category;
   const word = statusWord(t.status);
   const meta = [
     showDate ? `${shortDate(t.created_at)}, ${time12(t.created_at)}` : time12(t.created_at),
-    methodLabel(t), t.trip, t.subcategory ?? t.category, t.note && t.payee_name,
+    methodLabel(t), t.trip, t.subcategory ?? t.category, t.note && payee,
   ].filter(Boolean).join(' · ');
   const failed = t.status === 'FAILURE';
   return (

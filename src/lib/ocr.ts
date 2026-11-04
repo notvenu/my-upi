@@ -35,6 +35,10 @@ export async function readNote(text: string, names: string[]): Promise<Receipt> 
 // The English model downloads once, then it's cached.
 // The photo is shrunk and turned grey and high-contrast first, which reads thermal receipts noticeably better.
 async function viaTesseract(img: ImageBitmap, onProgress: (p: number) => void): Promise<Receipt> {
+  return parseReceipt(await readText(img, onProgress));
+}
+// Plain text from an image on this device: also used for payment screenshots shared from UPI apps.
+export async function readText(img: ImageBitmap, onProgress: (p: number) => void = () => {}): Promise<string> {
   onProgress(0);
   const { createWorker } = await import('tesseract.js');
   const k = Math.min(1, 1800 / Math.max(img.width, img.height));
@@ -44,12 +48,16 @@ async function viaTesseract(img: ImageBitmap, onProgress: (p: number) => void): 
   const ctx = c.getContext('2d')!;
   ctx.filter = 'grayscale(1) contrast(1.5)';
   ctx.drawImage(img, 0, 0, c.width, c.height);
+  // light text on a dark screen (dark-mode screenshots): flip it, the reader wants dark on light
+  const px = ctx.getImageData(0, 0, c.width, c.height).data;
+  let sum = 0, n = 0;
+  for (let i = 0; i < px.length; i += 4 * 97) { sum += px[i]; n++; }
+  if (sum / n < 110) { ctx.filter = 'grayscale(1) contrast(1.5) invert(1)'; ctx.drawImage(img, 0, 0, c.width, c.height); }
   const worker = await createWorker('eng', 1, {
     logger: (m) => { if (m.status === 'recognizing text') onProgress(m.progress); },
   });
   try {
-    const { data } = await worker.recognize(c);
-    return parseReceipt(data.text);
+    return (await worker.recognize(c)).data.text;
   } finally {
     await worker.terminate();
   }

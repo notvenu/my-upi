@@ -1,8 +1,9 @@
 import { allocate, findRecurring, nextDue, rematch, settleFromCredits, type Every } from './calc';
-import { guess, payees } from './learn';
+import { byCategory, guess, nudges, parseQuick, payees, safeToSpend, suggestBudgets, type Nudge } from './learn';
+import type { UpiReceipt } from './receipt';
 import { emit } from './store';
 import { matchRows, methodFromDesc, payeeFromDesc, type StmtRow } from './statement';
-import { CATEGORIES, SUBCATEGORIES } from './upi';
+import { CATEGORIES, genericName, rupees, SUBCATEGORIES } from './upi';
 
 // The whole store, kept as one JSON document in localStorage and synced row by row
 // to Supabase when signed in (sync.ts). Every write goes through these functions, which call save().
@@ -164,6 +165,57 @@ export const monthTxns = (ym: string) => db.txns.filter((t) => t.created_at.star
 const today = () => localIso().slice(0, 10);
 export const knownPayees = () => payees(db.txns, today());
 export const guessFor = (p: { vpa?: string | null; name?: string | null; mcc?: string | null }) => guess(db.txns, today(), p);
+// The name to show for a UPI ID: a saved person's, else the name you gave that shop before, else the QR's own (if it's a real name).
+export function nameForVpa(vpa: string, qrName?: string): string {
+  const v = vpa.toLowerCase();
+  const person = db.people.find((p) => p.vpa?.toLowerCase() === v);
+  if (person) return person.name;
+  const known = knownPayees().find((p) => p.vpa?.toLowerCase() === v && p.named);
+  return known?.name ?? (qrName && !genericName(qrName, vpa) ? qrName : '');
+}
+
+// ── budgets (paise per category, in settings so they sync) ──
+export const getBudgets = (): Record<string, number> => { try { return JSON.parse(getSetting('budgets') || '{}'); } catch { return {}; } };
+export const setBudgets = (b: Record<string, number>) => setSetting('budgets', JSON.stringify(Object.fromEntries(Object.entries(b).filter(([, v]) => v > 0))));
+export const budgetStatus = () => safeToSpend(getBudgets(), db.txns, today());
+export const budgetSuggestions = () => suggestBudgets(db.txns, today());
+export const spentByCategory = () => byCategory(db.txns, today().slice(0, 7));
+
+// ── things worth pointing out: learn.ts's, plus friends who've owed you for three weeks ──
+export function listNudges(): Nudge[] {
+  const dismissed: string[] = JSON.parse(getSetting('nudges_dismissed') || '[]');
+  const t = today(), wk = Math.floor(Date.parse(t) / (7 * 864e5)); // friends: at most once a week
+  const late = new Map<string, { name: string; amount: number }>();
+  for (const s of unpaidSplits()) {
+    if (Date.parse(t) - Date.parse(s.created_at.slice(0, 10)) < 21 * 864e5) continue;
+    const k = String(s.person_id ?? s.name), x = late.get(k) ?? { name: s.name, amount: 0 };
+    late.set(k, { ...x, amount: x.amount + s.amount });
+  }
+  const friends = [...late].map(([k, x]): Nudge => ({ key: `o:${k}:${wk}`, warn: false, text: `${x.name.split(' ')[0]} has owed you ${rupees(x.amount)} for 3+ weeks` }));
+  return [...nudges(db.txns, t, getBudgets()), ...friends].filter((n) => !dismissed.includes(n.key));
+}
+export function dismissNudge(key: string) {
+  const kept: string[] = JSON.parse(getSetting('nudges_dismissed') || '[]');
+  setSetting('nudges_dismissed', JSON.stringify([...kept.slice(-200), key])); // ponytail: last 200 kept, old keys never come back anyway
+}
+
+// ── a payment receipt shared from a UPI app ──
+// Confirms the payment waiting for it (same UPI ID or name, else the newest one opened in the last half hour);
+// 'dup' when that UTR is already saved; null when nothing matches, so the caller opens a new entry.
+export function applyReceipt(r: UpiReceipt): { id: number; kind: 'confirmed' | 'dup' } | null {
+  const dup = r.ref ? db.txns.find((t) => t.bank_ref === r.ref || t.upi_txn_id === r.ref) : undefined;
+  if (dup) return { id: dup.id, kind: 'dup' };
+  if (r.direction !== 'debit') return null;
+  const pending = toConfirm();
+  const same = (t: Txn) => (r.vpa && t.payee_vpa?.toLowerCase() === r.vpa.toLowerCase()) || (!!r.payee && t.payee_name?.toLowerCase() === r.payee.toLowerCase());
+  const t = pending.find(same) ?? pending.find((x) => Date.now() - Date.parse(x.created_at) < 30 * 60e3);
+  if (!t) return null;
+  updateTxn(t.id, { status: 'SUCCESS', amount: r.amount, bank_ref: r.ref ?? t.bank_ref, payee_vpa: t.payee_vpa ?? r.vpa,
+    payee_name: genericName(t.payee_name, t.payee_vpa) && r.payee && !genericName(r.payee, r.vpa) ? r.payee : t.payee_name });
+  return { id: t.id, kind: 'confirmed' };
+}
+
+export const quickAdd = (text: string) => parseQuick(text, db.people, knownPayees());
 
 // ── categories ──
 // Every category with its subcategories, in order: the defaults (plus subcategories added the old way) until you

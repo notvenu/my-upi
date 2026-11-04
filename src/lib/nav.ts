@@ -8,16 +8,17 @@ export type Tab = 'home' | 'history' | 'insights' | 'scan' | 'people' | 'me';
 // From a trip: its name and people, so the split starts as "equally between them".
 export type PayDraft = {
   payee?: string; amount?: number; items?: { name: string; amount: number; who?: number[] }[]; bill?: string | null; date?: string | null; category?: string; place?: string; method?: Method; note?: string; trip?: string; people?: number[];
+  ref?: string; vpa?: string | null; direction?: 'debit' | 'credit'; // from a payment receipt shared in from a UPI app (ref = its UTR)
 };
 // App-wide screens any tab can open: paying / recording, "did you pay?", editing an entry, autopays, statement import.
 // scanMode / peopleView: which side the Scan and People tabs open on.
 // confirmId: the payment just made in a UPI app, shown first. requestFor: a split payment to offer "request your split now?" for.
 type Nav = {
   tab: Tab; pay: { qr: UpiQr | null; record: boolean; draft?: PayDraft } | null; confirming: boolean; confirmId: number | null; editing: Txn | null;
-  requestFor: number | null; subs: boolean; debts: boolean; investing: boolean; categories: boolean; importing: boolean; scanMode: 'qr' | 'bill'; peopleView: 'people' | 'groups' | 'trips';
+  requestFor: number | null; budgets: boolean; locked: boolean; subs: boolean; debts: boolean; investing: boolean; categories: boolean; importing: boolean; scanMode: 'qr' | 'bill'; peopleView: 'people' | 'groups' | 'trips';
 };
 export const nav: Nav = {
-  tab: 'home', pay: null, confirming: false, confirmId: null, editing: null, requestFor: null, subs: false, debts: false, investing: false, categories: false, importing: false, scanMode: 'qr', peopleView: 'people',
+  tab: 'home', pay: null, confirming: false, confirmId: null, editing: null, requestFor: null, budgets: false, locked: false, subs: false, debts: false, investing: false, categories: false, importing: false, scanMode: 'qr', peopleView: 'people',
 };
 export const setNav = (patch: Partial<Nav>) => { Object.assign(nav, patch); emit(); };
 // Where a UPI app can't be opened (laptop, iPhone), paying means recording it with its details.

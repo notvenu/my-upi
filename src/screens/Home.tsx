@@ -1,11 +1,11 @@
 'use client';
-import { ArrowUp, ChevronRight, Clock, FileText, FileUp, HandCoins, Luggage, PiggyBank, Plus, ReceiptText, Repeat, Send, Smartphone, Sparkles } from 'lucide-react';
+import { ArrowUp, ChevronRight, Clock, FileText, FileUp, HandCoins, Lightbulb, Luggage, PiggyBank, Plus, ReceiptText, Repeat, Send, Smartphone, Sparkles, TriangleAlert, Wallet, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import Avatar from '@/components/Avatar';
 import NavBar from '@/components/NavBar';
 import TxnRow from '@/components/TxnRow';
 import { ME } from '@/lib/calc';
-import { db, getSetting, listGroups, listPeople, listSubs, listTrips, monthTxns, toConfirm, unpaidSplits } from '@/lib/db';
+import { budgetStatus, budgetSuggestions, db, dismissNudge, getSetting, listGroups, listNudges, listPeople, listSubs, listTrips, monthTxns, quickAdd, toConfirm, unpaidSplits } from '@/lib/db';
 import { openPay, setNav, type Tab } from '@/lib/nav';
 import { readNote } from '@/lib/ocr';
 import { peek, whoFor } from '@/lib/receipt';
@@ -27,13 +27,23 @@ function QuickNote() {
     const t = setInterval(() => setStep((s) => s + 1), 1100);
     return () => clearInterval(t);
   }, [busy]);
+  // one amount ("120 chai split rahul"): read right here, instantly, and offline
+  const local = () => {
+    const q = quickAdd(text);
+    if (!q) return false;
+    openPay(null, true, { payee: q.payee, amount: q.amount, note: q.note || undefined, method: q.method ?? undefined, people: q.people });
+    setText('');
+    return true;
+  };
   async function send() {
     if (!text.trim() || busy) return;
     haptic();
+    if ((text.match(/\d+(?:\.\d+)?k?/gi) ?? []).length === 1 && local()) return;
     setBusy(true);
     try {
       const people = listPeople(), groups = listGroups();
-      const r = await readNote(text, [...groups, ...people].map((x) => x.name));
+      const r = await readNote(text, [...groups, ...people].map((x) => x.name)).catch((e) => { if (local()) return null; throw e; });
+      if (!r) return;
       const items = r.items.map((it) => ({ name: it.name, amount: it.amount, who: whoFor(it.for, people, groups) }));
       // everyone in it: who it's shared "with", plus anyone an item names
       const named = [...new Set([...whoFor(r.with, people, groups), ...items.flatMap((it) => it.who)].filter((id) => id !== ME))];
@@ -140,6 +150,9 @@ export default function Home({ goTab }: { goTab: (t: Tab) => void }) {
   const owe = debts.reduce((a, d) => a + d.amount, 0);
   const worth = db.investments.reduce((a, i) => a + i.value, 0);
   const gain = worth - db.investments.reduce((a, i) => a + i.invested, 0);
+  const budget = budgetStatus();
+  const usualMonth = budget.limit ? 0 : Object.values(budgetSuggestions()).reduce((a, v) => a + v, 0);
+  const noticed = listNudges().slice(0, 4);
 
   return (
     <div className="page">
@@ -158,6 +171,27 @@ export default function Home({ goTab }: { goTab: (t: Tab) => void }) {
               <button onClick={() => goTab('people')}><span className="hero-label">Owed to you</span><span className="num">{rupees(owed)}</span></button>
             </div>
           </section>
+
+          {/* budgets: what's left per day for the rest of the month, or an offer to set one from your usual months */}
+          {budget.limit > 0 ? (
+            <button className="card safe" onClick={() => { haptic(); setNav({ budgets: true }); }}>
+              <span className="mini-icon lime"><Wallet size={17} /></span>
+              <span className="grow">
+                <span className="hero-label">Safe to spend today</span>
+                <span className={`num big${budget.left < 0 ? ' over' : ''}`}>{budget.left < 0 ? `Over by ${rupees(-budget.left)}` : rupees(budget.perDay)}</span>
+                <span className="sub small">{rupees(Math.max(0, budget.left))} left of {rupees(budget.limit)} · {budget.daysLeft} day{budget.daysLeft > 1 ? 's' : ''} to go</span>
+                <span className="bar"><i style={{ width: `${Math.min(100, (budget.spent / budget.limit) * 100)}%` }} className={budget.left < 0 ? 'over' : ''} /></span>
+              </span>
+            </button>
+          ) : usualMonth > 0 && (
+            <div className="list" style={{ marginTop: 12 }}>
+              <button className="item" onClick={() => { haptic(); setNav({ budgets: true }); }}>
+                <span className="mini-icon"><Wallet size={17} /></span>
+                <span className="grow"><b className="t">Set a monthly budget</b><br /><span className="sub">Your usual month is about {rupees(usualMonth)}</span></span>
+                <ChevronRight size={18} strokeWidth={2.5} className="chev" />
+              </button>
+            </div>
+          )}
 
           {/* Add payment: cash, card or UPI with every detail (UPI can then open the app to pay). Scanning a QR is the round button. */}
           <div className="actions">
@@ -193,6 +227,22 @@ export default function Home({ goTab }: { goTab: (t: Tab) => void }) {
                 </button>
               )}
             </div>
+          )}
+
+          {/* what MyUPI noticed in your payments: budgets, odd amounts, price changes, friends who owe */}
+          {noticed.length > 0 && (
+            <>
+              <h2 className="eyebrow">Noticed</h2>
+              <div className="list">
+                {noticed.map((n) => (
+                  <div key={n.key} className="item">
+                    <span className={`mini-icon${n.warn ? ' amber' : ''}`}>{n.warn ? <TriangleAlert size={17} /> : <Lightbulb size={17} />}</span>
+                    <span className="grow" style={{ fontSize: 15 }}>{n.text}</span>
+                    <button className="icon-btn plain" aria-label="Dismiss" onClick={() => { haptic(); dismissNudge(n.key); }}><X size={17} /></button>
+                  </div>
+                ))}
+              </div>
+            </>
           )}
 
           {/* what you owe and what you've put away, always in view */}
@@ -266,6 +316,14 @@ export default function Home({ goTab }: { goTab: (t: Tab) => void }) {
         .action:active { transform: scale(.94); transition-duration: .1s; }
         .action.main { background: var(--lime); color: var(--on-lime); }
         .t { font-weight: 600; }
+        .safe { display: flex; gap: 14px; align-items: flex-start; width: 100%; text-align: left; margin-top: 12px; }
+        .safe .grow { display: grid; gap: 2px; }
+        .safe .big { font-size: 26px; font-weight: 700; color: var(--lime); }
+        .safe .big.over { color: var(--red); font-size: 22px; }
+        .safe .small { font-size: 13px; }
+        .bar { display: block; height: 4px; border-radius: 2px; background: var(--raised); margin-top: 8px; overflow: hidden; }
+        .bar i { display: block; height: 100%; background: var(--lime); }
+        .bar i.over { background: var(--red); }
       `}</style>
     </div>
   );

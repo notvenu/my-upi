@@ -1,6 +1,7 @@
 'use client';
-import { ChevronRight, Cloud, CloudOff, Download, FileUp, HandCoins, PiggyBank, Repeat, Tags, Upload } from 'lucide-react';
-import { useRef, useState } from 'react';
+import { Bell, ChevronRight, Cloud, CloudOff, Download, FileUp, Fingerprint, HandCoins, PiggyBank, Repeat, Tags, Upload, Wallet } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { disableReminders, enableReminders, lockAvailable, lockOn, remindersOn, removeLock, setupLock, unlock } from '@/lib/pwa';
 import Avatar from '@/components/Avatar';
 import Combobox from '@/components/Combobox';
 import NavBar from '@/components/NavBar';
@@ -8,7 +9,7 @@ import { db, exportJson, getSetting, importJson, setSetting } from '@/lib/db';
 import { setNav } from '@/lib/nav';
 import { rupees } from '@/lib/upi';
 import { signOut, signOutOthers, supabase, sync } from '@/lib/sync';
-import { ask, download, preferredApp, setPreferredApp, toast, UPI_APPS, vpaError } from '@/lib/ui';
+import { ask, download, preferredApp, setPreferredApp, toast, UPI_APPS, vpaError, ymd } from '@/lib/ui';
 
 const STATUS = { off: 'Not syncing', syncing: 'Syncing…', synced: 'Synced', offline: 'Offline · syncs when back online' };
 
@@ -30,6 +31,23 @@ export default function Me() {
   async function endOthers() {
     if (!(await ask('Sign out other devices?', 'Every other phone or laptop signed in to this account goes back to the login screen. This one stays signed in.', 'Sign out others'))) return;
     try { await signOutOthers(); toast('Other devices signed out'); } catch (e) { toast(`Couldn't: ${(e as Error).message}`); }
+  }
+
+  // this phone only: the fingerprint lock and daily reminders
+  const [locked, setLocked] = useState(lockOn());
+  const [canLock, setCanLock] = useState(false);
+  const [reminding, setReminding] = useState(remindersOn());
+  useEffect(() => { lockAvailable().then(setCanLock); }, []);
+  async function toggleLock() {
+    if (locked) { if (await unlock()) { removeLock(); setLocked(false); toast('Lock turned off'); } return; }
+    if (await setupLock()) { setLocked(true); toast('MyUPI now asks for your fingerprint or screen lock'); }
+    else toast("Couldn't set up the lock");
+  }
+  async function toggleReminders() {
+    if (reminding) { disableReminders(); setReminding(false); return; }
+    const r = await enableReminders(ymd(new Date()));
+    if (r === true) { setReminding(true); toast('Reminders on: autopays, debts, payments to confirm, friends who owe'); }
+    else toast(r);
   }
 
   const backup = () => download(`myupi-backup-${new Date().toISOString().slice(0, 10)}.json`, exportJson());
@@ -93,6 +111,23 @@ export default function Me() {
             <h2 className="eyebrow">Default UPI app</h2>
             <Combobox label="Default UPI app" options={UPI_APPS.map((a) => ({ value: a.pkg, label: a.label }))} value={preferredApp().pkg} onChange={setPreferredApp} />
             <p className="hint" style={{ marginLeft: 4 }}>Opened when you pay from your Android phone.</p>
+
+            <h2 className="eyebrow">This phone</h2>
+            <div className="list">
+              {canLock && (
+                <label className="item">
+                  <span className="mini-icon"><Fingerprint size={17} /></span>
+                  <span className="grow">Lock MyUPI<br /><span className="sub">Fingerprint, face or screen lock to open</span></span>
+                  <input type="checkbox" role="switch" className="switch" checked={locked} onChange={toggleLock} />
+                </label>
+              )}
+              <label className="item">
+                <span className="mini-icon"><Bell size={17} /></span>
+                <span className="grow">Reminders<br /><span className="sub">Autopays, debts, payments to confirm, friends who owe</span></span>
+                <input type="checkbox" role="switch" className="switch" checked={reminding} onChange={toggleReminders} />
+              </label>
+            </div>
+            <p className="hint" style={{ marginLeft: 4 }}>To share a payment receipt from PhonePe or Google Pay into MyUPI, install MyUPI to your home screen first.</p>
           </div>
 
           <section>
@@ -101,6 +136,11 @@ export default function Me() {
               <button className="item" onClick={() => setNav({ importing: true })}>
                 <span className="mini-icon lime"><FileUp size={17} /></span>
                 <span className="grow">Upload a statement<br /><span className="sub">Bank, PhonePe or super.money · PDF, Excel or CSV</span></span>
+                <ChevronRight size={18} strokeWidth={2.5} className="chev" />
+              </button>
+              <button className="item" onClick={() => setNav({ budgets: true })}>
+                <span className="mini-icon"><Wallet size={17} /></span>
+                <span className="grow">Budgets<br /><span className="sub">A monthly limit per category</span></span>
                 <ChevronRight size={18} strokeWidth={2.5} className="chev" />
               </button>
               <button className="item" onClick={() => setNav({ subs: true })}>

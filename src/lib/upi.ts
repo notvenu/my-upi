@@ -44,8 +44,21 @@ export function parseUpiQr(text: string): UpiQr | null {
   if (!vpa || !VPA.test(vpa)) return null;
   const am = parseFloat(params.am);
   const name = params.pn?.trim() || vpa;
-  return { vpa, name, amount: am > 0 ? am : undefined, mcc: params.mc, note: params.tn?.trim() || undefined, params: { ...params, pa: vpa }, raw };
+  const tn = params.tn?.trim();
+  return { vpa, name, amount: am > 0 ? am : undefined, mcc: params.mc, note: tn && !fillerNote(tn, name) ? tn : undefined, params: { ...params, pa: vpa }, raw };
 }
+
+// Small-shop QRs from PhonePe, Paytm, BharatPe and the like carry the provider's name, not the shop's
+// ("PhonePeMerchant", "Paytm Merchant"), or no name at all. Those get named by you once, then remembered by UPI ID.
+export const genericName = (name: string | null | undefined, vpa?: string | null) => {
+  const n = (name ?? '').trim();
+  return !n || n === vpa || VPA.test(n) || /^\d+$/.test(n)
+    || /^(phone ?pe|paytm|bharat ?pe|google ?pay|gpay|amazon ?pay|mobikwik|freecharge|cred|pine ?labs|razorpay|bhim|upi)?[\s_-]*(merchant|business|store|shop|qr|user|customer)s?$/i.test(n)
+    || /^(merchant|na|n\/a|null|upi|payment|payee|unknown)$/i.test(n);
+};
+// The QR's "tn" when it's just filler: "Pay to BharatPe Merchant", "Payment", "UPI", or the name again.
+export const fillerNote = (tn: string, name: string) =>
+  /^(pay(ing|ment)?( to .*)?|upi( payment)?|na|n\/a|null|merchant payment|scan ?& ?pay)$/i.test(tn.trim()) || tn.trim().toLowerCase() === name.trim().toLowerCase();
 
 // EMV TLV: two-digit tag, two-digit length, value. Tags 26–51 hold payment networks; UPI's has the UPI ID as one of its
 // own nested values. 52 merchant code, 54 amount, 59 name.

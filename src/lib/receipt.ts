@@ -145,3 +145,28 @@ export function parseReceipt(text: string): Receipt {
 
   return { shop, date, total, items };
 }
+
+// A payment receipt from a UPI app (a screenshot read by OCR, or the text its Share button sends):
+// "Paid to SWIGGY · swiggy@ybl · ₹245 · UPI Ref 612345678901 · 10:42 am on 04 Nov 2026" in PhonePe, Google Pay or Paytm wording.
+export type UpiReceipt = { amount: number; payee: string; vpa: string | null; ref: string | null; date: string | null; direction: 'debit' | 'credit' };
+export function parseUpiReceipt(text: string): UpiReceipt | null {
+  const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  const all = lines.join('\n');
+  // ₹ is often read as "%", "X" or "2" by OCR; a "Rs" / "INR" or a ₹-only line is safer, so those come first
+  const amt = all.match(/(?:₹|rs\.?|inr)\s*([\d,]+(?:\.\d{1,2})?)/i) ?? all.match(/^[%X]?\s?([\d,]+\.\d{2})$/m) ?? all.match(/^[₹%]\s?([\d,]+(?:\.\d{1,2})?)$/m);
+  const amount = amt ? Math.round(parseFloat(amt[1].replace(/,/g, '')) * 100) : 0;
+  if (!amount) return null;
+  const ref = all.match(/(?:utr|upi\s*ref(?:erence)?|ref(?:erence)?\s*no|upi\s*transaction\s*id|rrn)[^\d]{0,20}(\d{12})\b/i)?.[1] ?? all.match(/\b(\d{12})\b/)?.[1] ?? null;
+  const vpa = all.match(/\b[\w.\-]+@[a-z][\w]*\b/i)?.[0] ?? null;
+  const credit = /received from|credited to your|money received/i.test(all);
+  const lead = credit ? /^(?:received from|from)\b\s*:?\s*(.*)$/i : /^(?:paid (?:successfully )?to|paying|sent to|to)\b\s*:?\s*(.*)$/i;
+  let payee = '';
+  for (let i = 0; i < lines.length && !payee; i++) {
+    const m = lines[i].match(lead);
+    if (m) payee = m[1] || lines[i + 1] || '';
+  }
+  payee = payee.replace(/[₹].*$/, '').replace(/\b[\w.\-]+@\w+\b/, '').trim();
+  let date: string | null = null;
+  for (const m of all.matchAll(/(\d{1,2}[\/\- ](?:[A-Za-z]{3,9}|\d{1,2})[\/\-, ]+\d{2,4}|[A-Za-z]{3,9}\.? \d{1,2},? \d{4})/g)) if ((date = parseDate(m[1]))) break;
+  return { amount, payee: payee || (vpa ?? ''), vpa, ref, date, direction: credit ? 'credit' : 'debit' };
+}

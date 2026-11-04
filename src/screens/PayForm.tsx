@@ -10,7 +10,7 @@ import Sheet from '@/components/Sheet';
 import ItemsEditor from '@/components/ItemsEditor';
 import SplitEditor from '@/components/SplitEditor';
 import TripField from '@/components/TripField';
-import { addTxn, guessFor, knownPayees, tripGroup, type Method } from '@/lib/db';
+import { addTxn, guessFor, knownPayees, nameForVpa, tripGroup, type Method } from '@/lib/db';
 import { setNav, type PayDraft } from '@/lib/nav';
 import { useSplit } from '@/lib/split';
 import { canOpenApps, currentPlace, haptic, markOpened, openUpiApp, preferredApp, removeBill, setPreferredApp, toast, toPaise, UPI_APPS, ymd } from '@/lib/ui';
@@ -26,12 +26,13 @@ export default function PayForm({ qr: q, record = false, draft, onClose }: {
 }) {
   const [mode, setMode] = useState<'pay' | 'record'>(record ? 'record' : 'pay');
   const [amount, setAmount] = useState(draft?.amount ? String(draft.amount / 100) : q?.amount ? String(q.amount) : ''); // a QR with an amount fills it in
-  const [payee, setPayee] = useState(q?.name ?? draft?.payee ?? '');
-  const [vpa, setVpa] = useState(q?.vpa ?? null);
+  // a QR's payee: a saved person's name, the name you gave this UPI ID before, or the QR's own when it's a real one (not "PhonePeMerchant")
+  const [payee, setPayee] = useState(() => (q ? nameForVpa(q.vpa, q.name) : draft?.payee ?? ''));
+  const [vpa, setVpa] = useState(q?.vpa ?? draft?.vpa ?? null);
   // what history (or the QR's merchant code) says about this payee: fills category and note until you change them
-  const [g0] = useState(() => guessFor({ vpa: q?.vpa, name: q?.name ?? draft?.payee, mcc: q?.mcc }));
+  const [g0] = useState(() => guessFor({ vpa: q?.vpa ?? draft?.vpa, name: q ? nameForVpa(q.vpa, q.name) : draft?.payee, mcc: q?.mcc }));
   const touched = useRef({ cat: !!draft?.category, note: !!draft?.note, method: !!draft?.method || !!q });
-  const [direction, setDirection] = useState<'debit' | 'credit'>('debit');
+  const [direction, setDirection] = useState<'debit' | 'credit'>(draft?.direction ?? 'debit');
   const [method, setMethod] = useState<Method>(draft?.method ?? (q ? 'upi' : g0?.payee?.method ?? (record && !draft ? 'cash' : 'upi')));
   const [note, setNote] = useState(draft?.note ?? q?.note ?? g0?.note ?? '');
   const [category, setCategory] = useState(draft?.category ?? g0?.category ?? 'Other');
@@ -48,6 +49,8 @@ export default function PayForm({ qr: q, record = false, draft, onClose }: {
   const total = toPaise(amount);
   const split = useSplit(total, draft?.items, draft?.people);
   const name = payee.trim() || q?.name || '';
+  const unnamed = !!q && !payee.trim(); // a shop QR with no real name: ask once, it's remembered by UPI ID
+  const ref = { txn_ref: q?.params.tr || null, bank_ref: draft?.ref ?? null };
   const bad = split.myShare < 0 || split.overItems;
   const known = name ? guessFor({ vpa, name }) : null;
   const seen = known?.payee;
@@ -108,7 +111,7 @@ export default function PayForm({ qr: q, record = false, draft, onClose }: {
   function pay() {
     // a payee you've paid before keeps their usual category and note, so coming back only asks the amount
     const learned = known?.from === 'history' ? { category: known.category, subcategory: known.subcategory, note: known.note } : {};
-    const id = addTxn({ ...learned, ...(q?.note ? { note: q.note } : {}), amount: q?.amount ? toPaise(String(q.amount)) : 0, payee_vpa: vpa, payee_name: name || 'Payment', status: 'PENDING', source: 'app', method: 'upi', app: app.label });
+    const id = addTxn({ ...learned, ...ref, ...(q?.note ? { note: q.note } : {}), amount: q?.amount ? toPaise(String(q.amount)) : 0, payee_vpa: vpa, payee_name: name || 'Payment', status: 'PENDING', source: 'app', method: 'upi', app: app.label });
     setPreferredApp(app.pkg);
     markOpened(id);
     onClose(true);
@@ -117,7 +120,7 @@ export default function PayForm({ qr: q, record = false, draft, onClose }: {
 
   const entry = () => ({
     amount: split.total, direction, note, category, subcategory, bill_uri: bill, place, trip, lat: coords?.lat, lng: coords?.lng,
-    payee_vpa: vpa, payee_name: name || null, method, app: method === 'upi' ? app.label : null, items: split.itemsData(),
+    ...ref, payee_vpa: vpa, payee_name: name || null, method, app: method === 'upi' ? app.label : null, items: split.itemsData(),
     created_at: date === today ? undefined : `${date}T12:00:00`, // an older bill keeps its own date
   });
   // Details first, then pay: saved as unconfirmed with everything filled in; coming back only asks "did it go through?".
@@ -128,7 +131,7 @@ export default function PayForm({ qr: q, record = false, draft, onClose }: {
     onClose(true);
     openUpiApp(app.pkg);
   }
-  const payAfter = canOpenApps && direction === 'debit' && method === 'upi';
+  const payAfter = canOpenApps && direction === 'debit' && method === 'upi' && !draft?.ref; // a shared receipt is already paid
 
   function save() {
     const paid = split.total;
@@ -152,8 +155,9 @@ export default function PayForm({ qr: q, record = false, draft, onClose }: {
         <Avatar name={name || '?'} size={64} />
         {q ? (
           <>
-            <div style={{ fontSize: 20, fontWeight: 600, marginTop: 10 }} className="ellipsis">{q.name}</div>
+            <input className="payee-input" value={payee} onChange={(e) => pickPayee(e.target.value)} placeholder="Name this shop" aria-label="Shop or person's name" />
             <div className="sub ellipsis">{q.vpa}</div>
+            {unnamed && <p className="hint center" style={{ margin: '6px 8px 0' }}>This QR doesn&apos;t say whose it is. Name it once and it&apos;s filled in every time you scan it.</p>}
             {(q.amount || q.note) && <div className="sub ellipsis">{[q.amount && rupees(toPaise(String(q.amount))), q.note].filter(Boolean).join(' · ')}</div>}
           </>
         ) : <input className="payee-input" list="known-payees" value={payee} onChange={(e) => pickPayee(e.target.value)} placeholder="Who are you paying?" aria-label="Paying" />}
@@ -170,7 +174,7 @@ export default function PayForm({ qr: q, record = false, draft, onClose }: {
   );
 
   return (
-    <Sheet full title={draft?.bill ? 'From your bill' : q ? `Pay ${q.name}` : draft?.trip ? `Add to ${draft.trip}` : 'Add payment'} onClose={cancel} footer={<>
+    <Sheet full title={draft?.ref ? 'From your receipt' : draft?.bill ? 'From your bill' : q ? (unnamed ? 'Pay this shop' : `Pay ${name}`) : draft?.trip ? `Add to ${draft.trip}` : 'Add payment'} onClose={cancel} footer={<>
       {split.myShare < 0 && <p className="sub center" style={{ color: 'var(--red)', marginBottom: 6 }}>Shares are more than the total. Lower someone&apos;s share.</p>}
       {payAfter ? (
         <div className="stack" style={{ gap: 4 }}>
@@ -183,6 +187,7 @@ export default function PayForm({ qr: q, record = false, draft, onClose }: {
         onChange={(d) => { setDirection(d); if (d === 'credit') split.set({ on: false }); }} />
       <input className="payee-input" list="known-payees" value={payee} onChange={(e) => pickPayee(e.target.value)} placeholder={direction === 'debit' ? 'Paid to (name or shop)' : 'Received from'}
         aria-label={direction === 'debit' ? 'Paid to' : 'Received from'} />
+      {unnamed && <p className="hint center">This QR doesn&apos;t say whose it is ({q.vpa}). Name it once and it&apos;s filled in every time you scan it.</p>}
       {direction === 'debit' && <>{history}{recentChips}</>}{payeeList}
 
       {/* the amount: the biggest thing on the screen */}

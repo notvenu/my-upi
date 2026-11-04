@@ -1,5 +1,5 @@
 'use client';
-import { ChevronRight, FileUp, HandCoins, Link2, Luggage, PiggyBank, Repeat, Settings, Tags } from 'lucide-react';
+import { ChevronRight, FileUp, HandCoins, Link2, Luggage, PiggyBank, Repeat, Settings, Tags, Wallet } from 'lucide-react';
 import Sheet from '@/components/Sheet';
 import { setNav, type Tab } from '@/lib/nav';
 
@@ -11,6 +11,7 @@ export default function MoreMenu({ goTab, onClose }: { goTab: (t: Tab) => void; 
     { icon: PiggyBank, title: 'Investments and savings', sub: 'Funds, FDs, stocks, savings goals', open: () => setNav({ investing: true }) },
     { icon: Luggage, title: 'Trips and events', sub: 'Split everything on a trip in one place', open: () => { setNav({ peopleView: 'trips' }); goTab('people'); } },
     { icon: Link2, title: 'Groups and split links', sub: 'Roommates, and links that show who owes what', open: () => { setNav({ peopleView: 'groups' }); goTab('people'); } },
+    { icon: Wallet, title: 'Budgets', sub: 'A monthly limit per category', open: () => setNav({ budgets: true }) },
     { icon: Repeat, title: 'Autopays', sub: 'Subscriptions, EMIs, mandates', open: () => setNav({ subs: true }) },
     { icon: Tags, title: 'Categories', sub: 'Add, rename or delete categories', open: () => setNav({ categories: true }) },
     { icon: FileUp, title: 'Upload a statement', sub: 'Bank, PhonePe or super.money', open: () => setNav({ importing: true }) },

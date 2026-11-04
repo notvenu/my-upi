@@ -1,11 +1,17 @@
 'use client';
 import { ChartPie, CircleCheck, History as HistoryIcon, House, LayoutGrid, ScanLine, UserRound, Users } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
-import { getSetting, logDueSubs, rematchRepayments, setSetting, toConfirm } from '@/lib/db';
+import LockScreen from '@/components/LockScreen';
+import { applyReceipt, db, getSetting, logDueSubs, rematchRepayments, setSetting, toConfirm, updateTxn } from '@/lib/db';
 import { nav, openPay, setNav, type Tab } from '@/lib/nav';
 import { setScrollY, useStore } from '@/lib/store';
 import { startSync, supabase, sync } from '@/lib/sync';
-import { answer, askState, chrome, haptic, pushLayer, takeJustReturned, toast, toastState, ymd } from '@/lib/ui';
+import { readText } from '@/lib/ocr';
+import { lockOn, registerSW, syncReminders, takeShared } from '@/lib/pwa';
+import { parseUpiReceipt } from '@/lib/receipt';
+import { answer, askState, chrome, haptic, pushLayer, removeBill, saveBill, takeJustReturned, toast, toastState, ymd } from '@/lib/ui';
+import { rupees } from '@/lib/upi';
+import Budgets from './Budgets';
 import Categories from './Categories';
 import ConfirmSheet from './ConfirmSheet';
 import Debts from './Debts';
@@ -33,6 +39,29 @@ const TABS = [
 ] as const;
 
 startSync();
+registerSW();
+if (lockOn()) nav.locked = true;
+const RELOCK = 3 * 60e3; // away longer than this: locked again
+
+// A payment receipt shared from a UPI app: confirms the payment waiting for it, or opens a new entry filled in from it.
+async function readShared(s: { image?: Blob; text?: string }) {
+  let r = s.text ? parseUpiReceipt(s.text) : null;
+  const bill = s.image ? await saveBill(s.image) : null;
+  try {
+    if (!r && s.image) { toast('Reading the receipt…'); r = parseUpiReceipt(await readText(await createImageBitmap(s.image))); }
+  } catch { toast(navigator.onLine ? "Couldn't read that image" : 'Reading a receipt needs internet the first time, to download the reader'); }
+  if (!r) { toast("Couldn't find a payment in that. Fill it in."); openPay(null, true, { bill, method: 'upi' }); return; }
+  const done = applyReceipt(r);
+  if (done?.kind === 'dup') { removeBill(bill); toast('That payment is already saved'); return; }
+  if (done) {
+    const t = db.txns.find((x) => x.id === done.id)!;
+    if (bill && !t.bill_uri) updateTxn(t.id, { bill_uri: bill }); else removeBill(bill);
+    toast(`Paid ${rupees(r.amount)}${t.payee_name ? ` to ${t.payee_name}` : ''} · confirmed`);
+    if (t.category === 'Other' && !t.note) setNav({ editing: t }); // now the details
+    return;
+  }
+  openPay(null, true, { payee: r.payee, vpa: r.vpa, amount: r.amount, date: r.date, method: 'upi', ref: r.ref ?? undefined, bill, direction: r.direction });
+}
 
 export default function App() {
   useStore(); // any change to data, navigation, toasts or sync re-renders the app
@@ -67,14 +96,17 @@ export default function App() {
   const goTabRef = useRef(goTab);
   goTabRef.current = goTab;
   useEffect(() => {
+    let hiddenAt = 0;
     const check = () => {
-      if (document.visibilityState !== 'visible') return;
+      if (document.visibilityState !== 'visible') { hiddenAt = Date.now(); syncReminders(ymd(new Date())); return; }
+      if (lockOn() && hiddenAt && Date.now() - hiddenAt > RELOCK) setNav({ locked: true });
       const logged = logDueSubs(ymd(new Date()));
       if (logged) toast(`${logged} autopay${logged > 1 ? 's' : ''} logged`);
       const id = takeJustReturned();
       if (id !== null && toConfirm().some((t) => t.id === id)) { goTabRef.current('home'); setNav({ confirmId: id, confirming: true }); }
     };
     check(); // also on a fresh load, in case Android discarded the tab while the UPI app was open
+    takeShared().then((s) => s && readShared(s));
     document.addEventListener('visibilitychange', check);
     navigator.storage?.persist?.(); // ask the browser not to evict the data
     return () => document.removeEventListener('visibilitychange', check);
@@ -170,6 +202,7 @@ export default function App() {
           {nav.pay && <PayForm qr={nav.pay.qr} record={nav.pay.record} draft={nav.pay.draft} onClose={(saved) => { setNav({ pay: null }); if (saved) goTab('home'); }} />}
           {nav.importing && <Import onClose={() => setNav({ importing: false })} />}
           {nav.subs && <Subs onClose={() => setNav({ subs: false })} />}
+          {nav.budgets && <Budgets onClose={() => setNav({ budgets: false })} />}
           {nav.debts && <Debts onClose={() => setNav({ debts: false })} />}
           {nav.investing && <Investments onClose={() => setNav({ investing: false })} />}
           {nav.categories && <Categories onClose={() => setNav({ categories: false })} />}
@@ -178,6 +211,7 @@ export default function App() {
           {nav.requestFor !== null && <SplitRequestSheet key={nav.requestFor} txnId={nav.requestFor} onClose={() => setNav({ requestFor: null })} />}
 
           {/* banner that drops from the top, like an iOS system notification */}
+          {nav.locked && <LockScreen />}
           {toastShown && <div key={toastState.n} className="toast glass" role="status"><CircleCheck size={20} style={{ color: 'var(--lime)' }} /> <span>{toastState.msg}</span></div>}
         </>
       )}
