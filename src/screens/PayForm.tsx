@@ -1,6 +1,6 @@
 'use client';
 import { CalendarDays, LocateFixed, MapPin, MessageSquareText, ReceiptText } from 'lucide-react';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import Avatar from '@/components/Avatar';
 import BillField from '@/components/BillField';
 import CategoryPicker from '@/components/CategoryPicker';
@@ -10,7 +10,7 @@ import Sheet from '@/components/Sheet';
 import ItemsEditor from '@/components/ItemsEditor';
 import SplitEditor from '@/components/SplitEditor';
 import TripField from '@/components/TripField';
-import { addTxn, tripGroup, type Method } from '@/lib/db';
+import { addTxn, guessFor, knownPayees, tripGroup, type Method } from '@/lib/db';
 import { setNav, type PayDraft } from '@/lib/nav';
 import { useSplit } from '@/lib/split';
 import { canOpenApps, currentPlace, haptic, markOpened, openUpiApp, preferredApp, removeBill, setPreferredApp, toast, toPaise, UPI_APPS, ymd } from '@/lib/ui';
@@ -27,11 +27,15 @@ export default function PayForm({ qr: q, record = false, draft, onClose }: {
   const [mode, setMode] = useState<'pay' | 'record'>(record ? 'record' : 'pay');
   const [amount, setAmount] = useState(draft?.amount ? String(draft.amount / 100) : q?.amount ? String(q.amount) : ''); // a QR with an amount fills it in
   const [payee, setPayee] = useState(q?.name ?? draft?.payee ?? '');
+  const [vpa, setVpa] = useState(q?.vpa ?? null);
+  // what history (or the QR's merchant code) says about this payee: fills category and note until you change them
+  const [g0] = useState(() => guessFor({ vpa: q?.vpa, name: q?.name ?? draft?.payee, mcc: q?.mcc }));
+  const touched = useRef({ cat: !!draft?.category, note: !!draft?.note, method: !!draft?.method || !!q });
   const [direction, setDirection] = useState<'debit' | 'credit'>('debit');
-  const [method, setMethod] = useState<Method>(draft?.method ?? (record && !q && !draft ? 'cash' : 'upi'));
-  const [note, setNote] = useState(draft?.note ?? '');
-  const [category, setCategory] = useState(draft?.category ?? 'Other');
-  const [subcategory, setSubcategory] = useState<string | null>(null);
+  const [method, setMethod] = useState<Method>(draft?.method ?? (q ? 'upi' : g0?.payee?.method ?? (record && !draft ? 'cash' : 'upi')));
+  const [note, setNote] = useState(draft?.note ?? q?.note ?? g0?.note ?? '');
+  const [category, setCategory] = useState(draft?.category ?? g0?.category ?? 'Other');
+  const [subcategory, setSubcategory] = useState<string | null>(draft?.category ? null : g0?.subcategory ?? null);
   const [bill, setBill] = useState<string | null>(draft?.bill ?? null);
   const today = ymd(new Date());
   const [date, setDate] = useState(draft?.date && draft.date <= today ? draft.date : today);
@@ -45,6 +49,49 @@ export default function PayForm({ qr: q, record = false, draft, onClose }: {
   const split = useSplit(total, draft?.items, draft?.people);
   const name = payee.trim() || q?.name || '';
   const bad = split.myShare < 0 || split.overItems;
+  const known = name ? guessFor({ vpa, name }) : null;
+  const seen = known?.payee;
+  const recent = q ? [] : knownPayees().slice(0, 8);
+
+  // A payee typed or picked: refill what you haven't set yourself from what you did last time with them.
+  function pickPayee(n: string, v: string | null = null) {
+    const match = v ? null : knownPayees().find((p) => p.name.toLowerCase() === n.trim().toLowerCase());
+    v = v ?? match?.vpa ?? null;
+    setPayee(n);
+    setVpa(q?.vpa ?? v);
+    const g = n.trim() ? guessFor({ vpa: v, name: n }) : null;
+    if (!touched.current.cat) { setCategory(g?.category ?? 'Other'); setSubcategory(g?.subcategory ?? null); }
+    if (!touched.current.note) setNote(g?.note ?? '');
+    if (!touched.current.method && g?.payee?.method) setMethod(g.payee.method);
+  }
+  // known payee: who they are to you, and their usual amount one tap away
+  const history = seen && (
+    <div className="known">
+      <span className="sub">Paid {seen.count}× · usually {rupees(seen.typical)}{seen.category !== 'Other' ? ` · ${seen.category}` : ''}</span>
+      {!total && <button className="chip" onClick={() => { haptic(); setAmount(String(seen.amount / 100)); }}>{rupees(seen.amount)} again</button>}
+      <style jsx>{`
+        .known { display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 8px; margin-top: 8px; font-size: 14px; }
+        .chip { padding: 6px 12px; border-radius: 999px; background: var(--card); font-size: 14px; font-weight: 600; color: var(--lime); }
+      `}</style>
+    </div>
+  );
+  const recentChips = !q && !payee.trim() && recent.length > 0 && (
+    <div className="recent" aria-label="Paid before">
+      {recent.map((p) => (
+        <button key={p.key} onClick={() => { haptic(); pickPayee(p.name, p.vpa); }}>
+          <Avatar name={p.name} size={36} /><span className="ellipsis">{p.name}</span>
+        </button>
+      ))}
+      <style jsx>{`
+        .recent { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; margin: 10px -4px 0; padding: 0 4px; }
+        .recent button { display: grid; justify-items: center; gap: 4px; flex-shrink: 0; width: 68px; font-size: 12px; font-weight: 500; }
+        .recent span { max-width: 64px; }
+      `}</style>
+    </div>
+  );
+  const payeeList = (
+    <datalist id="known-payees">{knownPayees().slice(0, 50).map((p) => <option key={p.key} value={p.name} />)}</datalist>
+  );
 
   async function locate() {
     setLocating(true);
@@ -59,7 +106,9 @@ export default function PayForm({ qr: q, record = false, draft, onClose }: {
 
   // Saved as unconfirmed (with the scanned payee), then the app's Play Store page opens. Coming back asks "did you pay?".
   function pay() {
-    const id = addTxn({ amount: q?.amount ? toPaise(String(q.amount)) : 0, payee_vpa: q?.vpa ?? null, payee_name: name || 'Payment', status: 'PENDING', source: 'app', method: 'upi', app: app.label });
+    // a payee you've paid before keeps their usual category and note, so coming back only asks the amount
+    const learned = known?.from === 'history' ? { category: known.category, subcategory: known.subcategory, note: known.note } : {};
+    const id = addTxn({ ...learned, ...(q?.note ? { note: q.note } : {}), amount: q?.amount ? toPaise(String(q.amount)) : 0, payee_vpa: vpa, payee_name: name || 'Payment', status: 'PENDING', source: 'app', method: 'upi', app: app.label });
     setPreferredApp(app.pkg);
     markOpened(id);
     onClose(true);
@@ -68,7 +117,7 @@ export default function PayForm({ qr: q, record = false, draft, onClose }: {
 
   const entry = () => ({
     amount: split.total, direction, note, category, subcategory, bill_uri: bill, place, trip, lat: coords?.lat, lng: coords?.lng,
-    payee_vpa: q?.vpa ?? null, payee_name: name || null, method, app: method === 'upi' ? app.label : null, items: split.itemsData(),
+    payee_vpa: vpa, payee_name: name || null, method, app: method === 'upi' ? app.label : null, items: split.itemsData(),
     created_at: date === today ? undefined : `${date}T12:00:00`, // an older bill keeps its own date
   });
   // Details first, then pay: saved as unconfirmed with everything filled in; coming back only asks "did it go through?".
@@ -105,8 +154,10 @@ export default function PayForm({ qr: q, record = false, draft, onClose }: {
           <>
             <div style={{ fontSize: 20, fontWeight: 600, marginTop: 10 }} className="ellipsis">{q.name}</div>
             <div className="sub ellipsis">{q.vpa}</div>
+            {(q.amount || q.note) && <div className="sub ellipsis">{[q.amount && rupees(toPaise(String(q.amount))), q.note].filter(Boolean).join(' · ')}</div>}
           </>
-        ) : <input className="payee-input" value={payee} onChange={(e) => setPayee(e.target.value)} placeholder="Who are you paying?" aria-label="Paying" />}
+        ) : <input className="payee-input" list="known-payees" value={payee} onChange={(e) => pickPayee(e.target.value)} placeholder="Who are you paying?" aria-label="Paying" />}
+        {history}{recentChips}{payeeList}
       </div>
       <p className="sub center" style={{ margin: '14px 8px 18px' }}>Pay in your UPI app now and add the details when you&apos;re back, or fill them in first.</p>
       <h3 className="eyebrow">Pay with</h3>
@@ -130,8 +181,9 @@ export default function PayForm({ qr: q, record = false, draft, onClose }: {
     </>}>
       <Segmented options={[['debit', 'I paid'], ['credit', 'I received']] as const} value={direction}
         onChange={(d) => { setDirection(d); if (d === 'credit') split.set({ on: false }); }} />
-      <input className="payee-input" value={payee} onChange={(e) => setPayee(e.target.value)} placeholder={direction === 'debit' ? 'Paid to (name or shop)' : 'Received from'}
+      <input className="payee-input" list="known-payees" value={payee} onChange={(e) => pickPayee(e.target.value)} placeholder={direction === 'debit' ? 'Paid to (name or shop)' : 'Received from'}
         aria-label={direction === 'debit' ? 'Paid to' : 'Received from'} />
+      {direction === 'debit' && <>{history}{recentChips}</>}{payeeList}
 
       {/* the amount: the biggest thing on the screen */}
       <label className="amount">
@@ -140,7 +192,7 @@ export default function PayForm({ qr: q, record = false, draft, onClose }: {
           onChange={(e) => setAmount(cleanAmount(e.target.value))} style={{ width: `${Math.max(1, amount.length || 1) * 0.62 + 0.2}em` }} />
       </label>
 
-      <div style={{ marginTop: 14 }}><Segmented options={METHODS} value={method} onChange={setMethod} label="Paid by" /></div>
+      <div style={{ marginTop: 14 }}><Segmented options={METHODS} value={method} onChange={(m) => { touched.current.method = true; setMethod(m); }} label="Paid by" /></div>
       {method === 'upi' && direction === 'debit' && (
         <div style={{ marginTop: 10 }}><Combobox label="UPI app" options={UPI_APPS.map((a) => ({ value: a, label: a.label }))} value={app} onChange={setApp} /></div>
       )}
@@ -158,11 +210,11 @@ export default function PayForm({ qr: q, record = false, draft, onClose }: {
 
       <div className="reason">
         <MessageSquareText size={18} className="faint" />
-        <input value={note} onChange={(e) => setNote(e.target.value)} maxLength={80} placeholder="What's it for?" aria-label="Reason" />
+        <input value={note} onChange={(e) => { touched.current.note = true; setNote(e.target.value); }} maxLength={80} placeholder="What's it for?" aria-label="Reason" />
       </div>
 
       <h3 className="eyebrow">Category</h3>
-      <CategoryPicker category={category} subcategory={subcategory} onChange={(c, s) => { setCategory(c); setSubcategory(s); }} />
+      <CategoryPicker category={category} subcategory={subcategory} onChange={(c, s) => { touched.current.cat = true; setCategory(c); setSubcategory(s); }} />
 
       <h3 className="eyebrow">Trip or event</h3>
       <div className="list">

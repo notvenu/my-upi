@@ -3,11 +3,11 @@ import { Camera, ImageUp, PenLine, QrCode, ReceiptText, ScanLine, Zap } from 'lu
 import { useEffect, useRef, useState } from 'react';
 import Avatar from '@/components/Avatar';
 import NavBar from '@/components/NavBar';
-import { listPeople } from '@/lib/db';
+import { knownPayees, listPeople } from '@/lib/db';
 import { nav, openPay } from '@/lib/nav';
 import { readBill } from '@/lib/ocr';
 import { haptic, saveBill, toast } from '@/lib/ui';
-import { parseUpiQr, personQr } from '@/lib/upi';
+import { parseUpiQr, personQr, rupees } from '@/lib/upi';
 
 type Detector = { detect: (src: HTMLVideoElement | ImageBitmap) => Promise<{ rawValue: string }[]> };
 const Native = (globalThis as unknown as { BarcodeDetector?: new (o: object) => Detector }).BarcodeDetector;
@@ -40,6 +40,9 @@ type Mode = 'qr' | 'bill';
 // Two jobs, one camera: pay a UPI QR, or photograph a shop bill and let MyUPI fill in the entry (shop, total, items).
 export default function Scan() {
   const payable = listPeople().filter((p) => p.vpa);
+  // shops and people you've paid before, most-used lately first (saved people are already above)
+  const again = knownPayees().filter((x) => !payable.some((p) => p.vpa === x.vpa)).slice(0, 12);
+  const payAgain = (x: (typeof again)[number]) => { haptic(); if (x.vpa) openPay(personQr(x.vpa, x.name)); else openPay(null, true, { payee: x.name }); };
   const video = useRef<HTMLVideoElement>(null);
   const file = useRef<HTMLInputElement>(null);
   const track = useRef<MediaStreamTrack | null>(null);
@@ -177,6 +180,20 @@ export default function Scan() {
               </div>
             </>
           )}
+          {mode === 'qr' && again.length > 0 && (
+            <>
+              <h3 className="eyebrow">Pay again</h3>
+              <div className="people">
+                {again.map((x) => (
+                  <button key={x.key} className="person" onClick={() => payAgain(x)} aria-label={`Pay ${x.name} again`}>
+                    <Avatar name={x.name} size={52} />
+                    <span className="ellipsis">{x.name}</span>
+                    <span className="last">{rupees(x.amount)}</span>
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
         </section>
       </div>
 
@@ -227,6 +244,7 @@ export default function Scan() {
         .people { display: flex; gap: 4px; overflow-x: auto; scrollbar-width: none; }
         .person { display: grid; justify-items: center; gap: 6px; width: 68px; flex-shrink: 0; font-size: 12.5px; font-weight: 500; }
         .person span { max-width: 64px; }
+        .person .last { margin-top: -4px; color: var(--sub); font-size: 11.5px; }
         @media (min-width: 1100px) { .cam { height: min(74vh, 760px); } }
       `}</style>
     </div>

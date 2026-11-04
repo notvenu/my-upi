@@ -20,22 +20,68 @@ export const SUBCATEGORIES: Record<string, string[]> = {
 };
 
 // raw = the QR text exactly as scanned.
-export type UpiQr = { vpa: string; name: string; amount?: number; mcc?: string; params: Record<string, string>; raw: string };
+// note = the QR's own payment note (tn), e.g. "Order 1234".
+export type UpiQr = { vpa: string; name: string; amount?: number; mcc?: string; note?: string; params: Record<string, string>; raw: string };
 
+const VPA = /^[\w.\-]+@[\w.\-]+$/;
+
+// Shop QRs come in three shapes: a upi://pay link (also as tez://upi/pay, phonepe://pay, paytmmp://pay or a https link
+// carrying pa=), a BharatQR / EMV code ("000201…" with the UPI ID nested inside), or just a bare UPI ID.
 export function parseUpiQr(text: string): UpiQr | null {
-  const raw = text.trim();
-  if (!/^upi:\/\/pay\?/i.test(raw)) return null;
+  const raw = text.trim().replace(/^﻿/, '');
+  const q = raw.indexOf('?');
   const params: Record<string, string> = {};
-  for (const part of raw.split('?')[1].split('&')) {
-    const i = part.indexOf('=');
-    if (i < 0) continue;
-    try { params[part.slice(0, i).toLowerCase()] = decodeURIComponent(part.slice(i + 1).replace(/\+/g, ' ')); }
-    catch { params[part.slice(0, i).toLowerCase()] = part.slice(i + 1); }
-  }
-  if (!params.pa) return null;
+  if (/^[a-z][\w+.-]*:/i.test(raw) && q > 0) {
+    for (const part of raw.slice(q + 1).split('&')) {
+      const i = part.indexOf('=');
+      if (i < 0) continue;
+      const k = part.slice(0, i).toLowerCase(), v = part.slice(i + 1).replace(/\+/g, ' ');
+      try { params[k] = decodeURIComponent(v); } catch { params[k] = v; }
+    }
+  } else if (/^0002\d{2}/.test(raw)) Object.assign(params, emvParams(raw));
+  else if (VPA.test(raw)) params.pa = raw;
+  const vpa = params.pa?.trim();
+  if (!vpa || !VPA.test(vpa)) return null;
   const am = parseFloat(params.am);
-  return { vpa: params.pa, name: params.pn || params.pa, amount: am > 0 ? am : undefined, mcc: params.mc, params, raw };
+  const name = params.pn?.trim() || vpa;
+  return { vpa, name, amount: am > 0 ? am : undefined, mcc: params.mc, note: params.tn?.trim() || undefined, params: { ...params, pa: vpa }, raw };
 }
+
+// EMV TLV: two-digit tag, two-digit length, value. Tags 26–51 hold payment networks; UPI's has the UPI ID as one of its
+// own nested values. 52 merchant code, 54 amount, 59 name.
+function tlv(s: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (let i = 0; i + 4 <= s.length;) {
+    const len = Number(s.slice(i + 2, i + 4));
+    if (!Number.isFinite(len)) break;
+    out[s.slice(i, i + 2)] = s.slice(i + 4, i + 4 + len);
+    i += 4 + len;
+  }
+  return out;
+}
+function emvParams(s: string): Record<string, string> {
+  const top = tlv(s), p: Record<string, string> = {};
+  for (let t = 26; t <= 51; t++) {
+    const inner = top[String(t)];
+    if (!inner) continue;
+    const vpa = Object.values(tlv(inner)).find((v) => VPA.test(v.trim()));
+    if (vpa) { p.pa = vpa.trim(); break; }
+  }
+  if (top['59']) p.pn = top['59'];
+  if (top['54']) p.am = top['54'];
+  if (top['52'] && top['52'] !== '0000') p.mc = top['52'];
+  return p;
+}
+
+// A QR's merchant code (MCC) → our category, for a shop you've never paid before.
+const MCC: [RegExp, string][] = [
+  [/^(5812|5813|5814)$/, 'Food'], [/^(5411|5422|5441|5451|5462|5499)$/, 'Groceries'], [/^(5541|5542|5983)$/, 'Fuel'],
+  [/^(4111|4112|4121|4131|4789|7523)$/, 'Transport'], [/^(5122|5912|8011|8021|8031|8042|8043|8049|8062|8071|8099|7997)$/, 'Health'],
+  [/^(4814|4816|4899|4900)$/, 'Bills'], [/^(7832|7841|7922|7991|7994|7996|7999|5815|5816|5817|5818)$/, 'Entertainment'],
+  [/^(3\d{3}|4411|4511|4722|7011|7012)$/, 'Travel'], [/^(6513)$/, 'Rent'],
+  [/^(5[2-9]\d\d)$/, 'Shopping'], // the rest of the 5xxx retail range
+];
+export const mccCategory = (mcc?: string | null) => (mcc ? MCC.find(([re]) => re.test(mcc))?.[1] ?? null : null);
 
 // A saved person has no QR; build the plainest one possible.
 export function personQr(vpa: string, name: string): UpiQr {

@@ -1,4 +1,5 @@
 import { allocate, findRecurring, nextDue, rematch, settleFromCredits, type Every } from './calc';
+import { guess, payees } from './learn';
 import { emit } from './store';
 import { matchRows, methodFromDesc, payeeFromDesc, type StmtRow } from './statement';
 import { CATEGORIES, SUBCATEGORIES } from './upi';
@@ -159,13 +160,10 @@ export function chartScale() {
 
 export const monthTxns = (ym: string) => db.txns.filter((t) => t.created_at.startsWith(ym)).sort(newestFirst);
 
-// Category + subcategory picked last time for this payee (by UPI ID, else by name), if any.
-export function lastPick(vpa?: string | null, name?: string | null) {
-  const byVpa = vpa ? db.txns.filter((t) => t.payee_vpa === vpa) : [];
-  const pool = byVpa.length ? byVpa : name ? db.txns.filter((t) => t.payee_name?.toLowerCase() === name.toLowerCase()) : [];
-  const t = pool.sort(newestFirst)[0];
-  return t ? { category: t.category, subcategory: t.subcategory } : undefined;
-}
+// What history says about a payee (learn.ts): their usual category, note, amount; or a guess for someone new.
+const today = () => localIso().slice(0, 10);
+export const knownPayees = () => payees(db.txns, today());
+export const guessFor = (p: { vpa?: string | null; name?: string | null; mcc?: string | null }) => guess(db.txns, today(), p);
 
 // ── categories ──
 // Every category with its subcategories, in order: the defaults (plus subcategories added the old way) until you
@@ -407,7 +405,7 @@ export function planImport(rows: StmtRow[]): ImportRow[] {
   const imported = matchRows(left, db.txns.filter((t) => t.stmt_key).map(matchable));
   return rows.map((r) => {
     const name = payeeFromDesc(r.desc, r.vpa);
-    const last = lastPick(r.vpa, name);
+    const last = r.direction === 'debit' ? guessFor({ vpa: r.vpa, name }) : undefined;
     const base = {
       ...r, name, note: r.note ?? '', trip: r.trip ?? '',
       category: r.category || last?.category || (r.direction === 'credit' ? 'Transfer' : 'Other'),

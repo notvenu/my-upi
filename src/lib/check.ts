@@ -339,3 +339,50 @@ const pePdf = parsePdfStatement([
 ]);
 assert.deepEqual(pePdf.map((r) => [r.amount, r.direction, r.ref, payeeFromDesc(r.desc)]), [[24500, 'debit', '612345678901', 'Swiggy'], [50000, 'credit', undefined, 'Rahul']]);
 console.log('statement pdf checks passed');
+
+// QR formats shops actually print
+{
+  const tez = parseUpiQr('tez://upi/pay?pa=shop@okicici&pn=Shop&am=50&tn=Order%2012')!;
+  assert.deepEqual([tez.vpa, tez.name, tez.amount, tez.note], ['shop@okicici', 'Shop', 50, 'Order 12']);
+  assert.equal(parseUpiQr('upi://pay/?pa=a@ybl&pn=A?B')!.name, 'A?B'); // '?' in a value doesn't cut the link
+  assert.equal(parseUpiQr(' rahul@okaxis \n')!.vpa, 'rahul@okaxis');
+  assert.equal(parseUpiQr('upi://pay?pn=NoId'), null);
+  assert.equal(parseUpiQr('hello world'), null);
+  // BharatQR / EMV: UPI ID nested in tag 26, MCC 52, amount 54, name 59
+  const f = (t: string, v: string) => t + String(v.length).padStart(2, '0') + v;
+  const emv = f('00', '01') + f('01', '12') + f('26', f('00', 'A000000677010111') + f('01', 'kirana@ybl')) + f('52', '5411') + f('53', '356') + f('54', '99.50') + f('59', 'Ravi Kirana') + f('63', 'ABCD');
+  const e = parseUpiQr(emv)!;
+  assert.deepEqual([e.vpa, e.name, e.amount, e.mcc], ['kirana@ybl', 'Ravi Kirana', 99.5, '5411']);
+  assert.equal(mccCategory('5411'), 'Groceries');
+  assert.equal(mccCategory('5812'), 'Food');
+  assert.equal(mccCategory('0000'), null);
+}
+
+// the learner: payees, usual category / note, guesses for someone new
+import { guess, payees } from './learn.ts';
+import { mccCategory } from './upi.ts';
+{
+  const T = (name: string, vpa: string | null, category: string, date: string, amount = 10000, note: string | null = null) =>
+    ({ payee_name: name, payee_vpa: vpa, category, subcategory: null, note, amount, direction: 'debit' as const, status: 'SUCCESS', created_at: `${date}T10:00:00`, method: 'upi' as const, place: null });
+  const h = [
+    T('Chai Point', 'chai@ybl', 'Food', '2026-11-01', 2000, 'Tea'), T('Chai Point', 'chai@ybl', 'Food', '2026-10-30', 2000, 'Tea'),
+    T('Chai Point', null, 'Food', '2026-10-20', 3000), // typed by hand: joins the UPI ID with the same name
+    T('Sharma Medical', 's@okaxis', 'Health', '2026-09-01'), T('Old Shop', 'old@ybl', 'Shopping', '2025-01-01'),
+    T('Payment', null, 'Other', '2026-11-02'), // generic: not a payee
+  ];
+  const ps = payees(h, '2026-11-04');
+  assert.equal(ps[0].name, 'Chai Point');
+  assert.deepEqual([ps[0].count, ps[0].amount, ps[0].typical, ps[0].category, ps[0].note], [3, 2000, 2000, 'Food', 'Tea']);
+  assert.equal(ps.at(-1)!.name, 'Old Shop'); // long ago sinks
+  assert.ok(!ps.some((p) => p.name === 'Payment'));
+  assert.equal(guess(h, '2026-11-04', { vpa: 'chai@ybl' })!.from, 'history');
+  assert.equal(guess(h, '2026-11-04', { name: 'chai point' })!.note, 'Tea');
+  assert.deepEqual([guess(h, '2026-11-04', { name: 'Gupta Medical Hall' })!.category, guess(h, '2026-11-04', { name: 'Gupta Medical Hall' })!.from], ['Health', 'similar']);
+  assert.equal(guess(h, '2026-11-04', { name: 'Swiggy' })!.category, 'Food');
+  assert.equal(guess(h, '2026-11-04', { name: 'My Parent' }), null); // 'rent' only at a word start
+  assert.equal(guess(h, '2026-11-04', { name: 'Ravi', mcc: '5541' })!.category, 'Fuel');
+  // a habit that changed: the newest entries win
+  const moved = [T('X Co', 'x@ybl', 'Bills', '2026-11-03'), T('X Co', 'x@ybl', 'Bills', '2026-11-02'), ...[1, 2, 3].map((d) => T('X Co', 'x@ybl', 'Shopping', `2026-01-0${d}`))];
+  assert.equal(payees(moved, '2026-11-04')[0].category, 'Bills');
+}
+console.log('learn + qr checks passed');
